@@ -57,6 +57,7 @@ const DEFAULT_PROFILE: Omit<AthleteProfileState, 'isHydrated'> = {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 interface ProfileFromServer {
+  displayName?:    string;
   gender?:         string;
   weightCategory?: string;
   weightKg?:       number;
@@ -70,7 +71,7 @@ interface ProfileFromServer {
 // Maps raw server numbers to the store's string fields.
 function mapServerProfileToState(p: ProfileFromServer): Omit<AthleteProfileState, 'isHydrated'> {
   return {
-    displayName:    '',
+    displayName:    p.displayName ?? '',
     gender:         (p.gender === 'male' || p.gender === 'female') ? p.gender : '',
     weightCategory: p.weightCategory ?? '',
     weightKg:       p.weightKg  ? String(p.weightKg)  : '',
@@ -88,6 +89,7 @@ function mapServerProfileToState(p: ProfileFromServer): Omit<AthleteProfileState
 function buildServerPayload(data: Omit<AthleteProfileState, 'isHydrated'>) {
   const toNum = (v: string) => v ? Number(v) : undefined;
   return {
+    displayName:    data.displayName    || undefined,
     gender:         data.gender         || undefined,
     weightCategory: data.weightCategory || undefined,
     weightKg:       toNum(data.weightKg),

@@ -3,7 +3,9 @@ import { Types } from 'mongoose';
 import { StreamChat } from 'stream-chat';
 import { ConfigService } from '@nestjs/config';
 import { UsersRepository } from '../../auth/data/repositories/users.repository';
+import { AuthTokensService } from '../../auth/services/auth-tokens.service';
 import { UserDocument } from '../../auth/data/schemas/user.schema';
+import { generateDefaultAvatarUrl } from '../../../shared/utils/generate-avatar-url.util';
 import { UpdateProfileRequestDto } from '../presentation/dto/update-profile.dto';
 import {
   AuthenticatedUserResponse,
@@ -26,6 +28,7 @@ export class UsersService implements OnModuleInit {
 
   constructor(
     private readonly usersRepository: UsersRepository,
+    private readonly authTokensService: AuthTokensService,
     private readonly configService:   ConfigService,
   ) {}
 
@@ -64,6 +67,40 @@ export class UsersService implements OnModuleInit {
       this.usersRepository.countByRole(UserRole.Athlete),
     ]);
     return { coachCount, athleteCount };
+  }
+
+  // ─── DELETE /users/account ─────────────────────────────────────────────────
+  //
+  // Soft-delete flow (Option B):
+  //   1. Revoke every refresh token → no new access token can ever be issued
+  //   2. Anonymise the MongoDB document (PII wiped, isActive=false, deletedAt set)
+  //   3. Best-effort: update the Stream user so ghost avatar disappears in chats
+  //
+  // The document is intentionally kept in MongoDB so Stripe payment history and
+  // any future audit/legal requests remain traceable.
+  async deleteAccount(userId: string): Promise<void> {
+    const user = await this.usersRepository.findOneById(userId);
+    if (!user) throw new NotFoundException('Utilisateur introuvable.');
+
+    // 1. Revoke all refresh tokens — existing access tokens expire naturally (7d)
+    //    but can no longer be renewed, so the account is effectively locked out.
+    await this.authTokensService.revokeAllRefreshTokensForUser(
+      user._id as Types.ObjectId,
+    );
+
+    // 2. Anonymise + soft-delete the MongoDB document
+    await this.usersRepository.softDeleteAccount(userId);
+
+    // 3. Best-effort: overwrite the Stream user with a neutral identity so
+    //    ongoing conversations show "Compte Supprimé" instead of the real name/photo.
+    try {
+      await this.streamServerClient.upsertUsers([{
+        id:   userId,
+        name: 'Compte Supprimé',
+      } as unknown as Parameters<typeof this.streamServerClient.upsertUsers>[0][0]]);
+    } catch {
+      // Non-fatal — chat will update on the next cache refresh
+    }
   }
 
   // ─── GET /users/privacy ────────────────────────────────────────────────────
@@ -129,8 +166,13 @@ export class UsersService implements OnModuleInit {
       email:           userDocument.email,
       firstName:       userDocument.firstName,
       lastName:        userDocument.lastName,
+      displayName:     userDocument.displayName,
       role:            userDocument.role,
-      profilePhotoUrl: userDocument.profilePhotoUrl,
+      // Always return a valid avatar URL — existing accounts without one get a
+      // generated blue-circle-initials URL so no screen ever shows a blank avatar.
+      profilePhotoUrl:
+        userDocument.profilePhotoUrl ||
+        generateDefaultAvatarUrl(userDocument.firstName, userDocument.lastName),
       disciplines:     userDocument.disciplines ?? [],
       // Coach-specific fields — present only when filled by the coach
       speciality:      userDocument.speciality,

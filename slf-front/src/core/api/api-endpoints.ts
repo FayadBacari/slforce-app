@@ -29,6 +29,7 @@ export const API_ENDPOINTS = {
     platformStats:        '/users/stats',
     getPrivacySettings:    '/users/privacy',
     updatePrivacySettings: '/users/privacy',
+    deleteMyAccount:       '/users/account',
   },
 
   chat: {

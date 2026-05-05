@@ -138,7 +138,7 @@ export function MakePaymentScreen() {
 
           {/* ─── Recipient card ─────────────────────────────────────────── */}
           <View style={styles.recipientCard}>
-            <AppAvatar photoUrl={undefined} fullName={coachName} size="md" />
+            <AppAvatar photoUrl={undefined} fullName={coachName || 'Coach'} size="md" />
             <View style={styles.recipientInfo}>
               <Text style={styles.recipientLabel}>Paiement vers</Text>
               <Text style={styles.recipientName}>{coachName}</Text>

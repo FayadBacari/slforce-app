@@ -8,6 +8,8 @@ export interface AuthenticatedUserResponse {
   email:            string;
   firstName:        string;
   lastName:         string;
+  // Optional handle / stage name chosen during onboarding
+  displayName?:     string;
   role:             UserRole;
   profilePhotoUrl?: string;
   // Coach disciplines shown as badges in search and profile

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Put, Patch, Post, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Put, Patch, Post, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
@@ -89,6 +89,20 @@ export class UsersController {
     void this.chatService.updateUserImageInStream(currentUser.userId, photoUrl);
 
     return { photoUrl };
+  }
+
+  // ─── Account deletion ─────────────────────────────────────────────────────
+
+  // DELETE /api/v1/users/account
+  // Soft-deletes the account: revokes all sessions, anonymises PII in MongoDB,
+  // and updates the Stream identity. The document is kept for audit/Stripe history.
+  // Returns 204 No Content on success.
+  @Delete('account')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteMyAccount(
+    @CurrentUser() currentUser: AuthenticatedUserPayload,
+  ): Promise<void> {
+    await this.usersService.deleteAccount(currentUser.userId);
   }
 
   // ─── Privacy settings ─────────────────────────────────────────────────────

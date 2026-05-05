@@ -9,6 +9,8 @@ export interface LoggedInUser {
   email:           string;
   firstName:       string;
   lastName:        string;
+  // Handle / stage name chosen during onboarding (optional)
+  displayName?:    string;
   role:            UserRole;
   profilePhotoUrl: string | undefined;
   // Coach discipline badges — empty array for athletes
@@ -19,6 +21,15 @@ export interface LoggedInUser {
   location?:        string;
   monthlyRate?:     number;
   experienceYears?: number;
+  // Athlete-specific profile fields (undefined for coaches)
+  gender?:          string;
+  weightCategory?:  string;
+  weightKg?:        number;
+  heightCm?:        number;
+  recordMuscleUp?:  number;
+  recordTraction?:  number;
+  recordDips?:      number;
+  recordSquat?:     number;
 }
 
 // The full athlete profile fetched from the API

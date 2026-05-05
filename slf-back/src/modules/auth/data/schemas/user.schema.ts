@@ -29,6 +29,11 @@ export class User {
   @Prop({ required: true, trim: true })
   lastName!: string;
 
+  // Nickname / handle chosen during onboarding — used as the @handle in the app.
+  // Distinct from firstName+lastName so coaches/athletes can have a stage name.
+  @Prop({ trim: true })
+  displayName?: string;
+
   @Prop({ trim: true })
   phoneNumber?: string;
 
@@ -114,6 +119,12 @@ export class User {
 
   @Prop()
   lastLoginAt?: Date;
+
+  // Set when the user triggers account deletion (soft-delete).
+  // The document stays in MongoDB for audit/Stripe traceability but
+  // all personal data is anonymised and isActive is set to false.
+  @Prop()
+  deletedAt?: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

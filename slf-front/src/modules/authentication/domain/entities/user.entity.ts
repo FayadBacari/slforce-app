@@ -5,6 +5,8 @@ export interface UserEntity {
   email:           string;
   firstName:       string;
   lastName:        string;
+  // Handle / stage name chosen during onboarding (optional)
+  displayName?:    string;
   role:            UserRole;
   profilePhotoUrl: string | undefined;
   createdAt:       Date;
@@ -15,6 +17,15 @@ export interface UserEntity {
   location?:        string;
   monthlyRate?:     number;
   experienceYears?: number;
+  // Athlete-specific profile fields
+  gender?:          string;
+  weightCategory?:  string;
+  weightKg?:        number;
+  heightCm?:        number;
+  recordMuscleUp?:  number;
+  recordTraction?:  number;
+  recordDips?:      number;
+  recordSquat?:     number;
 }
 
 export interface LoginCredentials {

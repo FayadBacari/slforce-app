@@ -6,7 +6,8 @@ import { AppScreenWrapper } from '@shared/components/app-screen-wrapper/app-scre
 import { AppTextInput } from '@shared/components/app-text-input/app-text-input';
 import { AppButton } from '@shared/components/app-button/app-button';
 import { useAuthenticationStore } from '@stores/authentication-store';
-import { authenticationRepository } from '@modules/authentication/data/repositories/authentication.repository';
+import { apiClient } from '@core/api/api-client';
+import { API_ENDPOINTS } from '@core/api/api-endpoints';
 import { disconnectCurrentUserFromStreamChat } from '@core/stream-chat/stream-chat-client';
 import { buildDeleteAccountStyles } from '@screen-styles/settings/delete-account.styles';
 
@@ -44,14 +45,23 @@ export default function DeleteAccountPage() {
   async function handleDeleteAccountConfirmed() {
     setIsDeleting(true);
     try {
-      // Logout-side effects: try the API first, then disconnect chat, then clear local state
+      // 1. Demander au backend de soft-supprimer le compte :
+      //    - révocation de tous les refresh tokens
+      //    - anonymisation des données personnelles en base (RGPD)
+      //    - mise à jour du statut Stream Chat
+      await apiClient.delete(API_ENDPOINTS.userProfile.deleteMyAccount);
+
+      // 2. Déconnecter proprement le client Stream Chat local
       try {
-        await authenticationRepository.logoutCurrentUser();
+        await disconnectCurrentUserFromStreamChat();
       } catch {
-        // Continue even if the API call fails (the user wants to leave anyway)
+        // Non bloquant — l'utilisateur veut partir de toute façon
       }
-      await disconnectCurrentUserFromStreamChat();
+
+      // 3. Effacer tous les tokens et données locaux
       await clearAllDataOnLogout();
+
+      // 4. Rediriger vers la page de connexion
       router.replace('/(public)/login');
     } catch {
       Alert.alert(

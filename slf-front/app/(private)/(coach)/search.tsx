@@ -180,7 +180,7 @@ function AthleteResultCard({
         <View style={styles.avatarSquare}>
           <AppAvatar
             photoUrl={athlete.profilePhotoUrl}
-            fullName={athlete.fullName}
+            fullName={athlete.fullName || 'Athlète'}
             size="md"
           />
         </View>

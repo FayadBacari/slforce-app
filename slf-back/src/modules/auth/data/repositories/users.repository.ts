@@ -30,19 +30,57 @@ export class UsersRepository {
     return matchingUser !== null;
   }
 
+  // All profile fields are optional — only filled fields are persisted.
+  // Saving everything in one create() call avoids a second round-trip to MongoDB
+  // and guarantees the registration response always returns the full profile.
   async createOne(params: {
-    email:           string;
-    hashedPassword:  string;
-    firstName:       string;
-    lastName:        string;
-    role:            UserRole;
+    email:            string;
+    hashedPassword:   string;
+    firstName:        string;
+    lastName:         string;
+    role:             UserRole;
+    profilePhotoUrl?: string;
+    // ── Shared profile fields ────────────────────────────────────────────────
+    displayName?:     string;
+    // ── Coach profile fields ─────────────────────────────────────────────────
+    speciality?:      string;
+    bio?:             string;
+    location?:        string;
+    monthlyRate?:     number;
+    experienceYears?: number;
+    disciplines?:     string[];
+    // ── Athlete profile fields ───────────────────────────────────────────────
+    gender?:          string;
+    weightCategory?:  string;
+    weightKg?:        number;
+    heightCm?:        number;
+    recordMuscleUp?:  number;
+    recordTraction?:  number;
+    recordDips?:      number;
+    recordSquat?:     number;
   }): Promise<UserDocument> {
     return this.userModel.create({
-      email:     params.email,
-      password:  params.hashedPassword,
-      firstName: params.firstName,
-      lastName:  params.lastName,
-      role:      params.role,
+      email:           params.email,
+      password:        params.hashedPassword,
+      firstName:       params.firstName,
+      lastName:        params.lastName,
+      role:            params.role,
+      profilePhotoUrl: params.profilePhotoUrl,
+      displayName:     params.displayName,
+      speciality:      params.speciality,
+      bio:             params.bio,
+      location:        params.location,
+      monthlyRate:     params.monthlyRate,
+      experienceYears: params.experienceYears,
+      disciplines:     params.disciplines ?? [],
+      gender:          params.gender,
+      weightCategory:  params.weightCategory,
+      weightKg:        params.weightKg,
+      heightCm:        params.heightCm,
+      recordMuscleUp:  params.recordMuscleUp,
+      recordTraction:  params.recordTraction,
+      recordDips:      params.recordDips,
+      recordSquat:     params.recordSquat,
     });
   }
 
@@ -56,7 +94,7 @@ export class UsersRepository {
   async updateProfileFields(
     userId: string,
     fieldsToUpdate: Partial<Pick<User,
-      'firstName' | 'lastName' | 'phoneNumber' | 'profilePhotoUrl' |
+      'displayName' | 'firstName' | 'lastName' | 'phoneNumber' | 'profilePhotoUrl' |
       'speciality' | 'bio' | 'location' | 'monthlyRate' | 'experienceYears' | 'disciplines' |
       'gender' | 'weightCategory' | 'weightKg' | 'heightCm' |
       'recordMuscleUp' | 'recordTraction' | 'recordDips' | 'recordSquat'
@@ -110,6 +148,51 @@ export class UsersRepository {
       .limit(limit)
       .select('-password')
       .exec();
+  }
+
+  // Soft-deletes an account: marks it inactive, anonymises all personal data
+  // so the original email / name / photo are freed immediately, and clears every
+  // profile field. The document stays in MongoDB so Stripe payment history and
+  // audit trails remain intact.
+  async softDeleteAccount(userId: string): Promise<void> {
+    if (!Types.ObjectId.isValid(userId)) return;
+    const timestamp = Date.now();
+    await this.userModel.updateOne(
+      { _id: userId },
+      {
+        $set: {
+          isActive:    false,
+          deletedAt:   new Date(),
+          // Replace PII with neutral placeholders — original email freed for re-use
+          email:       `deleted_${timestamp}@deleted.invalid`,
+          firstName:   'Compte',
+          lastName:    'Supprimé',
+          // Unusable password hash — account can never be logged into again
+          password:    'DELETED_ACCOUNT_NO_ACCESS',
+          disciplines: [],
+        },
+        $unset: {
+          profilePhotoUrl:  '',
+          displayName:      '',
+          phoneNumber:      '',
+          speciality:       '',
+          bio:              '',
+          location:         '',
+          monthlyRate:      '',
+          experienceYears:  '',
+          gender:           '',
+          weightCategory:   '',
+          weightKg:         '',
+          heightCm:         '',
+          recordMuscleUp:   '',
+          recordTraction:   '',
+          recordDips:       '',
+          recordSquat:      '',
+          stripeAccountId:  '',
+          lastLoginAt:      '',
+        },
+      },
+    ).exec();
   }
 
   // Saves one or both privacy flags for a user.

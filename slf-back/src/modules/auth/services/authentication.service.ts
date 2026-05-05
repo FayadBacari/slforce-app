@@ -19,6 +19,7 @@ import {
   AuthenticationSuccessResponse,
 } from '../presentation/dto/auth-response.dto';
 import { UserDocument } from '../data/schemas/user.schema';
+import { generateDefaultAvatarUrl } from '../../../shared/utils/generate-avatar-url.util';
 
 // The auth flow's "use case" layer.
 // Coordinates the repositories and the technical services to fulfil the
@@ -49,12 +50,43 @@ export class AuthenticationService {
       registrationData.password,
     );
 
+    // Generate a default avatar (blue circle + initials) and persist it in
+    // MongoDB immediately — every new account has a valid profilePhotoUrl
+    // from day one, shared identically across profile, search and chat.
+    const defaultAvatarUrl = generateDefaultAvatarUrl(
+      registrationData.firstName,
+      registrationData.lastName,
+    );
+
+    // Extract role-specific profile data sent by the onboarding screens.
+    const coach   = registrationData.coachProfile;
+    const athlete = registrationData.athleteProfile;
+
     const newlyCreatedUser = await this.usersRepository.createOne({
       email:           registrationData.email,
       hashedPassword,
       firstName:       registrationData.firstName,
       lastName:        registrationData.lastName,
       role:            registrationData.role,
+      profilePhotoUrl: defaultAvatarUrl,
+      // Shared
+      displayName:     coach?.displayName    ?? athlete?.displayName,
+      // Coach-specific
+      speciality:      coach?.speciality,
+      bio:             coach?.description,
+      location:        coach?.location,
+      monthlyRate:     coach?.pricePerMonth,
+      experienceYears: coach?.experienceYears,
+      disciplines:     coach?.skills         ?? [],
+      // Athlete-specific
+      gender:          athlete?.gender,
+      weightCategory:  athlete?.weightCategory,
+      weightKg:        athlete?.weightKg,
+      heightCm:        athlete?.heightCm,
+      recordMuscleUp:  athlete?.records?.muscleUp,
+      recordTraction:  athlete?.records?.traction,
+      recordDips:      athlete?.records?.dips,
+      recordSquat:     athlete?.records?.squat,
     });
 
     const issuedTokens = await this.authTokensService.issueTokensForUser({
@@ -199,14 +231,36 @@ export class AuthenticationService {
 
   // ─── INTERNAL HELPERS ────────────────────────────────────────────────────
   private formatUserForClient(userDocument: UserDocument): AuthenticatedUserResponse {
+    // Guarantee profilePhotoUrl is always set — existing accounts created before
+    // the automatic avatar generation get a generated URL on the fly.
+    const profilePhotoUrl =
+      userDocument.profilePhotoUrl ||
+      generateDefaultAvatarUrl(userDocument.firstName, userDocument.lastName);
+
     return {
       id:              (userDocument._id as Types.ObjectId).toString(),
       email:           userDocument.email,
       firstName:       userDocument.firstName,
       lastName:        userDocument.lastName,
+      displayName:     userDocument.displayName,
       role:            userDocument.role,
-      profilePhotoUrl: userDocument.profilePhotoUrl,
-      disciplines:     userDocument.disciplines ?? [],
+      profilePhotoUrl,
+      disciplines:     userDocument.disciplines   ?? [],
+      // Coach-specific fields
+      speciality:      userDocument.speciality,
+      bio:             userDocument.bio,
+      location:        userDocument.location,
+      monthlyRate:     userDocument.monthlyRate,
+      experienceYears: userDocument.experienceYears,
+      // Athlete-specific fields
+      gender:          userDocument.gender,
+      weightCategory:  userDocument.weightCategory,
+      weightKg:        userDocument.weightKg,
+      heightCm:        userDocument.heightCm,
+      recordMuscleUp:  userDocument.recordMuscleUp,
+      recordTraction:  userDocument.recordTraction,
+      recordDips:      userDocument.recordDips,
+      recordSquat:     userDocument.recordSquat,
     };
   }
 }

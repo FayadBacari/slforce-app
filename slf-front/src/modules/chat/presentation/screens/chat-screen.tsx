@@ -232,7 +232,7 @@ export function ChatScreen() {
 
         <AppAvatar
           photoUrl={participantPhoto}
-          fullName={participantName}
+          fullName={participantName || 'Utilisateur'}
           size="sm"
         />
 

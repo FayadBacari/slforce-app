@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, TextInput, Image } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@shared/theme/theme-provider';
 import { useAuthenticationStore } from '@stores/authentication-store';
 import { useAthleteProfileStore } from '@stores/athlete-profile-store';
 import { AppHeader } from '@shared/components/app-header/app-header';
-import { APP_IMAGES } from '@shared/assets/app-images';
+import { AppAvatar } from '@shared/components/app-avatar/app-avatar';
 import { buildAthleteProfileStyles } from '@screen-styles/athlete/profile.styles';
 
 // ─── Record cards config ──────────────────────────────────────────────────────
@@ -107,15 +107,13 @@ export default function AthleteProfilePage() {
             </TouchableOpacity>
           </View>
 
-          {/* Avatar */}
+          {/* Avatar — blue circle with initials when no remote photo */}
           <View style={styles.avatarContainer}>
             <View style={styles.avatarBorder}>
-              <Image
-                source={loggedInUser?.profilePhotoUrl
-                  ? { uri: loggedInUser.profilePhotoUrl }
-                  : APP_IMAGES.athlete}
-                style={styles.avatarImage}
-                resizeMode="cover"
+              <AppAvatar
+                photoUrl={loggedInUser?.profilePhotoUrl}
+                fullName={`${loggedInUser?.firstName ?? ''} ${loggedInUser?.lastName ?? ''}`.trim() || 'Athlète'}
+                sizeOverride={140}
               />
             </View>
             <Text style={styles.nameText}>

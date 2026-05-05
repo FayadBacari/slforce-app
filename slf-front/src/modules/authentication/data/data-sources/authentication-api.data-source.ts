@@ -17,6 +17,7 @@ interface RawAuthResponseFromServer {
     email:            string;
     firstName:        string;
     lastName:         string;
+    displayName?:     string;
     role:             'coach' | 'athlete';
     profilePhotoUrl?: string;
     disciplines?:     string[];
@@ -25,6 +26,14 @@ interface RawAuthResponseFromServer {
     location?:        string;
     monthlyRate?:     number;
     experienceYears?: number;
+    gender?:          string;
+    weightCategory?:  string;
+    weightKg?:        number;
+    heightCm?:        number;
+    recordMuscleUp?:  number;
+    recordTraction?:  number;
+    recordDips?:      number;
+    recordSquat?:     number;
   };
 }
 
@@ -49,7 +58,6 @@ export async function callRegisterAthleteApiEndpoint(
     lastName:  data.lastName,
     email:     data.email,
     password:  data.password,
-    // Profile data sent for future backend support — ignored if backend not ready
     athleteProfile: data.athleteProfile,
   });
 }
@@ -63,7 +71,6 @@ export async function callRegisterCoachApiEndpoint(
     lastName:  data.lastName,
     email:     data.email,
     password:  data.password,
-    // Profile data sent for future backend support — ignored if backend not ready
     coachProfile: data.coachProfile,
   });
 }
@@ -104,6 +111,7 @@ function convertServerResponseToAuthResult(
     email:           rawResponse.user.email,
     firstName:       rawResponse.user.firstName,
     lastName:        rawResponse.user.lastName,
+    displayName:     rawResponse.user.displayName,
     role:            rawResponse.user.role,
     profilePhotoUrl: rawResponse.user.profilePhotoUrl,
     createdAt:       new Date(),
@@ -113,6 +121,14 @@ function convertServerResponseToAuthResult(
     location:        rawResponse.user.location,
     monthlyRate:     rawResponse.user.monthlyRate,
     experienceYears: rawResponse.user.experienceYears,
+    gender:          rawResponse.user.gender,
+    weightCategory:  rawResponse.user.weightCategory,
+    weightKg:        rawResponse.user.weightKg,
+    heightCm:        rawResponse.user.heightCm,
+    recordMuscleUp:  rawResponse.user.recordMuscleUp,
+    recordTraction:  rawResponse.user.recordTraction,
+    recordDips:      rawResponse.user.recordDips,
+    recordSquat:     rawResponse.user.recordSquat,
   };
 
   return {

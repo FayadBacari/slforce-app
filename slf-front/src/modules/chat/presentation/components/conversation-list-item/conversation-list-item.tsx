@@ -49,7 +49,7 @@ function ConversationListItemComponent({
     >
       <AppAvatar
         photoUrl={conversation.otherParticipantPhoto}
-        fullName={conversation.otherParticipantName}
+        fullName={conversation.otherParticipantName || 'Utilisateur'}
         size="md"
         isOnline={conversation.isOtherParticipantOnline}
       />

@@ -217,7 +217,7 @@ function CoachResultCard({
         <View style={styles.avatarSquare}>
           <AppAvatar
             photoUrl={coach.profilePhotoUrl}
-            fullName={coach.fullName}
+            fullName={coach.fullName || 'Coach'}
             size="md"
           />
         </View>

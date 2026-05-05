@@ -50,6 +50,7 @@ const DEFAULT_PROFILE: Omit<CoachProfileState, 'isHydrated'> = {
 
 // Response shape from GET /users/profile (coach-specific fields only)
 interface ProfileFromServer {
+  displayName?:     string;
   speciality?:      string;
   bio?:             string;
   location?:        string;
@@ -62,6 +63,7 @@ interface ProfileFromServer {
 // Omits undefined so we don't overwrite filled fields with blanks.
 function buildServerPayload(data: Omit<CoachProfileState, 'isHydrated'>) {
   return {
+    displayName:     data.displayName     || undefined,
     speciality:      data.speciality      || undefined,
     bio:             data.description     || undefined,
     location:        data.location        || undefined,
@@ -74,7 +76,7 @@ function buildServerPayload(data: Omit<CoachProfileState, 'isHydrated'>) {
 // Maps a raw server response to the in-memory store shape.
 function mapServerProfileToState(profile: ProfileFromServer): Omit<CoachProfileState, 'isHydrated'> {
   return {
-    displayName:     '',
+    displayName:     profile.displayName     ?? '',
     speciality:      profile.speciality      ?? '',
     location:        profile.location        ?? '',
     pricePerMonth:   profile.monthlyRate     ? String(profile.monthlyRate)     : '',

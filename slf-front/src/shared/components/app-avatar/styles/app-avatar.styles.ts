@@ -20,8 +20,21 @@ const fontSizeForInitials: Record<AvatarSize, number> = {
   xl: 32,
 };
 
-export function buildAppAvatarStyles(theme: AppTheme, size: AvatarSize) {
-  const dimension = sizeInPixels[size];
+// Font size scales proportionally to the avatar dimension.
+// Base reference: xl (80px) → 32pt ≈ 40% of dimension.
+function deriveFontSize(dimension: number): number {
+  return Math.round(dimension * 0.4);
+}
+
+export function buildAppAvatarStyles(
+  theme: AppTheme,
+  size: AvatarSize,
+  sizeOverride?: number,
+) {
+  const dimension = sizeOverride ?? sizeInPixels[size];
+  const fontSize  = sizeOverride
+    ? deriveFontSize(sizeOverride)
+    : fontSizeForInitials[size];
 
   return StyleSheet.create({
     container: {
@@ -43,7 +56,7 @@ export function buildAppAvatarStyles(theme: AppTheme, size: AvatarSize) {
       justifyContent:  'center',
     },
     initialsText: {
-      fontSize:   fontSizeForInitials[size],
+      fontSize,
       fontWeight: '700',
       color:      COLORS.neutral.white,
     },

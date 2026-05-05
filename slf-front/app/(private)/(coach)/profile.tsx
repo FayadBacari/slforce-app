@@ -66,7 +66,7 @@ export default function CoachProfilePage() {
           <View style={styles.identityRow}>
             <AppAvatar
               photoUrl={loggedInUser?.profilePhotoUrl}
-              fullName={`${loggedInUser?.firstName ?? ''} ${loggedInUser?.lastName ?? ''}`}
+              fullName={`${loggedInUser?.firstName ?? ''} ${loggedInUser?.lastName ?? ''}`.trim() || 'Coach'}
               size="lg"
             />
             <View style={styles.identityTextSection}>

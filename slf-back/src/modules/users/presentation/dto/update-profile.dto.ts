@@ -6,6 +6,12 @@ import { Transform, Type } from 'class-transformer';
 export class UpdateProfileRequestDto {
   @IsOptional()
   @IsString()
+  @MinLength(2)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  displayName?: string;
+
+  @IsOptional()
+  @IsString()
   @MinLength(1)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   firstName?: string;
