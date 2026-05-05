@@ -1,0 +1,63 @@
+{
+  "expo": {
+    "name": "SLForce",
+    "slug": "slf-frontend",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "slforce",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.slforce.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "SLForce utilise votre caméra pour envoyer des photos dans les conversations.",
+        "NSPhotoLibraryUsageDescription": "SLForce accède à vos photos pour partager des images dans les conversations.",
+        "NSMicrophoneUsageDescription": "SLForce utilise votre microphone pour envoyer des messages vocaux."
+      }
+    },
+    "android": {
+      "package": "com.slforce.app",
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "color": "#3B82F6"
+        }
+      ],
+      [
+        "@stripe/stripe-react-native",
+        {
+          "merchantIdentifier": "merchant.com.slforce.app",
+          "enableGooglePay": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "SLForce accède à vos photos pour partager des images.",
+          "cameraPermission": "SLForce utilise votre caméra pour envoyer des photos."
+        }
+      ],
+      "expo-font"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "compilerOptions": {
+    // ─── Output target ────────────────────────────────────────────────────────
+    "module":             "commonjs",
+    "target":             "ES2022",
+    "rootDir":            "./src",
+    "outDir":             "./dist",
+    "declaration":        true,
+    "sourceMap":          true,
+    "removeComments":     true,
+    "incremental":        true,
+    "tsBuildInfoFile":    "./dist/.tsbuildinfo",
+
+    // ─── Decorators (required by NestJS) ──────────────────────────────────────
+    "emitDecoratorMetadata":  true,
+    "experimentalDecorators": true,
+
+    // ─── Module interop (lets us use `import x from 'cjs-module'`) ────────────
+    "esModuleInterop":              true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck":                 true,
+    "resolveJsonModule":            true,
+
+    // ─── Strict type checking ─────────────────────────────────────────────────
+    "strict":                  true,
+    "strictNullChecks":        true,
+    "noImplicitAny":           true,
+    "noImplicitReturns":       true,
+    "noFallthroughCasesInSwitch": true,
+    // Kept lax — bind/call/apply checking is rarely useful and can be noisy
+    "strictBindCallApply":     false,
+
+    // ─── Path aliases (cleaner imports than ../../../) ────────────────────────
+    // Resolved by tsconfig-paths at runtime (already installed by Nest).
+    "paths": {
+      "@core/*":    ["./src/core/*"],
+      "@modules/*": ["./src/modules/*"],
+      "@shared/*":  ["./src/shared/*"]
+    }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
