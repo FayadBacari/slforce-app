@@ -8,16 +8,21 @@ import { Resend } from 'resend';
 export class EmailService {
   private readonly resend:   Resend;
   private readonly mailFrom: string;
+  private readonly isDev:    boolean;
   private readonly logger = new Logger(EmailService.name);
 
   constructor(private readonly configService: ConfigService) {
     const apiKey   = this.configService.getOrThrow<string>('email.resendApiKey');
     this.mailFrom  = this.configService.getOrThrow<string>('email.mailFrom');
     this.resend    = new Resend(apiKey);
+    this.isDev     = this.configService.get<string>('NODE_ENV') !== 'production';
   }
 
   // Sends the "reset your password" email with a one-click link.
-  // Throws on delivery failure so the caller can surface the error.
+  // In development, if Resend rejects the send (e.g. onboarding@resend.dev can
+  // only deliver to the Resend account owner's email), the reset URL is printed
+  // directly to the terminal so you can still test the full reset flow without
+  // needing a working mail server.
   async sendPasswordResetEmail(params: {
     to:        string;
     firstName: string;
@@ -33,7 +38,23 @@ export class EmailService {
     });
 
     if (error) {
-      this.logger.error('Resend delivery failed', error);
+      // Log the full Resend error so we can diagnose (status code + message)
+      this.logger.error(
+        `Resend delivery failed → ${error.name}: ${error.message}`,
+      );
+
+      // ── DEV FALLBACK ────────────────────────────────────────────────────────
+      // Resend's onboarding@resend.dev sender can only deliver to the account
+      // owner's email. In dev we print the URL to the terminal so you can test
+      // the reset flow without a verified domain.
+      if (this.isDev) {
+        this.logger.warn(
+          `[DEV] Impossible d'envoyer l'email à ${to}. ` +
+          `Utilise ce lien directement pour tester :\n\n  ${resetUrl}\n`,
+        );
+        return; // don't throw — treat as success in dev
+      }
+
       throw new Error(`Email delivery failed: ${error.message}`);
     }
 

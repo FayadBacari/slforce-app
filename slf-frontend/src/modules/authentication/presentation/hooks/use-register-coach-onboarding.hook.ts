@@ -24,7 +24,7 @@ export function useRegisterCoachOnboarding() {
   const saveLoginData     = useAuthenticationStore((s) => s.saveLoginDataAfterSuccessfulLogin);
   const pendingAccount    = usePendingRegistrationStore((s) => s.pendingAccount);
   const clearPending      = usePendingRegistrationStore((s) => s.clearPendingAccountData);
-  const saveCoachProfile  = useCoachProfileStore((s) => s.saveCoachProfile);
+  const hydrateCoachProfile = useCoachProfileStore((s) => s.hydrateFromRegistration);
 
   const [currentStep, setCurrentStep] = useState(1);
   const [fadeAnim]                    = useState(new Animated.Value(1));
@@ -93,9 +93,9 @@ export function useRegisterCoachOnboarding() {
         coachProfile: profileData,
       });
 
-      // Push the full profile to the backend (single source of truth).
-      // saveCoachProfile handles both in-memory population and the PUT /users/profile call.
-      await saveCoachProfile(profileData);
+      // Populate the in-memory store from the onboarding form data.
+      // No network call needed — the registration endpoint already persisted everything.
+      hydrateCoachProfile(profileData);
 
       clearPending();
 
@@ -128,7 +128,7 @@ export function useRegisterCoachOnboarding() {
     } finally {
       setLoading(false);
     }
-  }, [pendingAccount, profileData, clearPending, saveLoginData, router]);
+  }, [pendingAccount, profileData, hydrateCoachProfile, clearPending, saveLoginData, router]);
 
   // ── canProceed per step ──────────────────────────────────────────────────────
   const canProceed = useMemo(() => {

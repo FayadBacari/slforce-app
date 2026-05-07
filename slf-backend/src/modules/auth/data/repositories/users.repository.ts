@@ -131,9 +131,11 @@ export class UsersRepository {
 
   // Returns the N most recently registered active coaches whose profile is public.
   // isProfilePublic: false hides the account from search results entirely.
+  // We use `true` (not `{ $ne: false }`) so MongoDB can use the compound index
+  // { role, isActive, createdAt } efficiently — $ne prevents index use.
   async findRecentCoaches(limit: number): Promise<UserDocument[]> {
     return this.userModel
-      .find({ role: UserRole.Coach, isActive: true, isProfilePublic: { $ne: false } })
+      .find({ role: UserRole.Coach, isActive: true, isProfilePublic: true })
       .sort({ createdAt: -1 })
       .limit(limit)
       .select('-password')   // never send the hash to any consumer
@@ -143,7 +145,7 @@ export class UsersRepository {
   // Returns the N most recently registered active athletes whose profile is public.
   async findRecentAthletes(limit: number): Promise<UserDocument[]> {
     return this.userModel
-      .find({ role: UserRole.Athlete, isActive: true, isProfilePublic: { $ne: false } })
+      .find({ role: UserRole.Athlete, isActive: true, isProfilePublic: true })
       .sort({ createdAt: -1 })
       .limit(limit)
       .select('-password')

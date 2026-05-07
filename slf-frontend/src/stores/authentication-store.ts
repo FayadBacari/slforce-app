@@ -31,6 +31,12 @@ interface AuthenticationActions {
   // Updates disciplines in memory after the coach edits them in profile settings.
   updateDisciplines: (disciplines: string[]) => void;
 
+  // Merges fresh identity data returned by the token-refresh endpoint into the
+  // in-memory user object AND persists the new values to SecureStorage.
+  // Call this after a successful silent token refresh so email/firstName/lastName
+  // are never stale across long-lived sessions.
+  refreshUserIdentity: (identity: Partial<Pick<LoggedInUser, 'email' | 'firstName' | 'lastName' | 'profilePhotoUrl'>>) => Promise<void>;
+
   clearAllDataOnLogout: () => Promise<void>;
 
   restoreSessionFromDeviceStorage: () => Promise<void>;
@@ -53,11 +59,14 @@ export const useAuthenticationStore = create<AuthenticationStore>()(
 
     // Called right after the user logs in or registers successfully
     saveLoginDataAfterSuccessfulLogin: async ({ user, accessToken, refreshToken }) => {
-      // Save tokens + identity to secure storage so the session survives app restarts
-      await saveValueToSecureStorage(SECURE_STORAGE_KEYS.accessToken,  accessToken);
-      await saveValueToSecureStorage(SECURE_STORAGE_KEYS.refreshToken, refreshToken);
-      await saveValueToSecureStorage(SECURE_STORAGE_KEYS.loggedInUserId,   user.id);
-      await saveValueToSecureStorage(SECURE_STORAGE_KEYS.loggedInUserRole, user.role);
+      // Save tokens + full identity to secure storage so the session survives app restarts
+      await saveValueToSecureStorage(SECURE_STORAGE_KEYS.accessToken,           accessToken);
+      await saveValueToSecureStorage(SECURE_STORAGE_KEYS.refreshToken,          refreshToken);
+      await saveValueToSecureStorage(SECURE_STORAGE_KEYS.loggedInUserId,        user.id);
+      await saveValueToSecureStorage(SECURE_STORAGE_KEYS.loggedInUserRole,      user.role);
+      await saveValueToSecureStorage(SECURE_STORAGE_KEYS.loggedInUserEmail,     user.email);
+      await saveValueToSecureStorage(SECURE_STORAGE_KEYS.loggedInUserFirstName, user.firstName);
+      await saveValueToSecureStorage(SECURE_STORAGE_KEYS.loggedInUserLastName,  user.lastName);
 
       // Persist the photo URL so it's available after an app restart
       if (user.profilePhotoUrl) {
@@ -93,12 +102,33 @@ export const useAuthenticationStore = create<AuthenticationStore>()(
       });
     },
 
+    // Merges fresh identity data after a silent token refresh — keeps email/name
+    // correct across long-lived sessions without requiring a full re-login.
+    refreshUserIdentity: async (identity) => {
+      if (identity.email)           await saveValueToSecureStorage(SECURE_STORAGE_KEYS.loggedInUserEmail,     identity.email);
+      if (identity.firstName)       await saveValueToSecureStorage(SECURE_STORAGE_KEYS.loggedInUserFirstName, identity.firstName);
+      if (identity.lastName)        await saveValueToSecureStorage(SECURE_STORAGE_KEYS.loggedInUserLastName,  identity.lastName);
+      if (identity.profilePhotoUrl) await saveValueToSecureStorage(SECURE_STORAGE_KEYS.profilePhotoUrl,       identity.profilePhotoUrl);
+
+      set((state) => {
+        if (state.loggedInUser) {
+          if (identity.email)           state.loggedInUser.email           = identity.email;
+          if (identity.firstName)       state.loggedInUser.firstName       = identity.firstName;
+          if (identity.lastName)        state.loggedInUser.lastName        = identity.lastName;
+          if (identity.profilePhotoUrl) state.loggedInUser.profilePhotoUrl = identity.profilePhotoUrl;
+        }
+      });
+    },
+
     // Called when the user logs out — clears everything
     clearAllDataOnLogout: async () => {
       await deleteValueFromSecureStorage(SECURE_STORAGE_KEYS.accessToken);
       await deleteValueFromSecureStorage(SECURE_STORAGE_KEYS.refreshToken);
       await deleteValueFromSecureStorage(SECURE_STORAGE_KEYS.loggedInUserId);
       await deleteValueFromSecureStorage(SECURE_STORAGE_KEYS.loggedInUserRole);
+      await deleteValueFromSecureStorage(SECURE_STORAGE_KEYS.loggedInUserEmail);
+      await deleteValueFromSecureStorage(SECURE_STORAGE_KEYS.loggedInUserFirstName);
+      await deleteValueFromSecureStorage(SECURE_STORAGE_KEYS.loggedInUserLastName);
       await deleteValueFromSecureStorage(SECURE_STORAGE_KEYS.profilePhotoUrl);
 
       set((state) => {
@@ -108,21 +138,24 @@ export const useAuthenticationStore = create<AuthenticationStore>()(
       });
     },
 
-    // Called once when the app starts — restores the session if tokens are saved.
-    // profilePhotoUrl is now restored from SecureStorage so the avatar is correct
-    // immediately without waiting for a network call to /users/profile.
+    // Called once when the app starts — restores the full session from SecureStorage
+    // so every field of LoggedInUser (including email, firstName, lastName) is
+    // immediately correct without waiting for a network call.
     restoreSessionFromDeviceStorage: async () => {
       const savedAccessToken  = await readValueFromSecureStorage(SECURE_STORAGE_KEYS.accessToken);
       const savedRefreshToken = await readValueFromSecureStorage(SECURE_STORAGE_KEYS.refreshToken);
       const savedUserId       = await readValueFromSecureStorage(SECURE_STORAGE_KEYS.loggedInUserId);
       const savedUserRole     = await readValueFromSecureStorage(SECURE_STORAGE_KEYS.loggedInUserRole);
+      const savedEmail        = await readValueFromSecureStorage(SECURE_STORAGE_KEYS.loggedInUserEmail);
+      const savedFirstName    = await readValueFromSecureStorage(SECURE_STORAGE_KEYS.loggedInUserFirstName);
+      const savedLastName     = await readValueFromSecureStorage(SECURE_STORAGE_KEYS.loggedInUserLastName);
       const savedPhotoUrl     = await readValueFromSecureStorage(SECURE_STORAGE_KEYS.profilePhotoUrl);
 
       const hasASavedSession =
-        savedAccessToken !== null &&
+        savedAccessToken  !== null &&
         savedRefreshToken !== null &&
-        savedUserId !== null &&
-        savedUserRole !== null;
+        savedUserId       !== null &&
+        savedUserRole     !== null;
 
       set((state) => {
         if (hasASavedSession) {
@@ -131,10 +164,10 @@ export const useAuthenticationStore = create<AuthenticationStore>()(
           state.loggedInUser = {
             id:              savedUserId!,
             role:            savedUserRole as 'coach' | 'athlete',
-            email:           '',  // Filled when the profile screen loads
-            firstName:       '',
-            lastName:        '',
-            profilePhotoUrl: savedPhotoUrl ?? undefined,
+            email:           savedEmail     ?? '',
+            firstName:       savedFirstName ?? '',
+            lastName:        savedLastName  ?? '',
+            profilePhotoUrl: savedPhotoUrl  ?? undefined,
             disciplines:     [],  // Refreshed when profile settings loads
           };
         }

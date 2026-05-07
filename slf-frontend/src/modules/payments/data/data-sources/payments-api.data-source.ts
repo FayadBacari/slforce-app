@@ -94,7 +94,7 @@ export async function callGetBankAccountStatusApiEndpoint(): Promise<BankAccount
 
 export async function callStartBankAccountOnboardingApiEndpoint(): Promise<string> {
   const response = await apiClient.post<BackendSuccessEnvelope<{ onboardingUrl: string }>>(
-    `${API_ENDPOINTS.payments.saveCoachBankAccountDetails}/onboarding`,
+    API_ENDPOINTS.payments.bankAccountOnboarding,
   );
   return unwrapBackendEnvelope(response).onboardingUrl;
 }
@@ -104,7 +104,7 @@ export async function callStartBankAccountOnboardingApiEndpoint(): Promise<strin
 
 export async function callGetBankAccountDashboardUrlApiEndpoint(): Promise<string> {
   const response = await apiClient.get<BackendSuccessEnvelope<{ dashboardUrl: string }>>(
-    `${API_ENDPOINTS.payments.getCoachBankAccountDetails}/dashboard`,
+    API_ENDPOINTS.payments.bankAccountDashboard,
   );
   return unwrapBackendEnvelope(response).dashboardUrl;
 }

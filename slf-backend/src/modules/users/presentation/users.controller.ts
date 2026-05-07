@@ -76,9 +76,10 @@ export class UsersController {
     @UploadedFile() file: Express.Multer.File | undefined,
   ): Promise<{ photoUrl: string }> {
     if (!file) throw new BadRequestException('Aucun fichier reçu.');
-    const host     = this.configService.getOrThrow<string>('app.host');
-    const port     = this.configService.getOrThrow<number>('app.port');
-    const photoUrl = `http://${host}:${port}/uploads/${file.filename}`;
+    // Use APP_URL as the base so photos are served over HTTPS in production.
+    // Constructing http://host:port manually would break mixed-content rules.
+    const appUrl   = this.configService.getOrThrow<string>('app.appUrl');
+    const photoUrl = `${appUrl}/uploads/${file.filename}`;
 
     // Write the remote URL to MongoDB — this is the single source of truth
     await this.usersService.updateCurrentUserProfile(currentUser.userId, { profilePhotoUrl: photoUrl });

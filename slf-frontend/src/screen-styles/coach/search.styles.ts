@@ -117,7 +117,7 @@ export function buildCoachSearchStyles(theme: AppTheme) {
 
     // ─── Athlete result card ────────────────────────────────────────────────
     athleteCard: {
-      backgroundColor: '#FFFFFF',
+      backgroundColor: theme.colors.cardBackground,   // adapts to dark/light mode
       borderRadius:    20,
       padding:         16,
       gap:             12,

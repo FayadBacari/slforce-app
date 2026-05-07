@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { apiClient } from '@core/api/api-client';
-import { API_ENDPOINTS } from '@core/api/api-endpoints';
-import { unwrapBackendEnvelope, type BackendSuccessEnvelope } from '@core/api/api-response-envelope';
+import {
+  callGetUserProfileApiEndpoint,
+  callUpdateUserProfileApiEndpoint,
+  type UserProfileRaw,
+} from '@modules/users/data/data-sources/user-profile-api.data-source';
 
 // ─── Shape ───────────────────────────────────────────────────────────────────
 
@@ -22,6 +24,9 @@ export interface AthleteProfileState {
 }
 
 interface AthleteProfileActions {
+  // Called after registration — populates in-memory state from the onboarding form.
+  // Does NOT make a network call: the registration endpoint already persisted the data.
+  hydrateFromRegistration:   (data: Omit<AthleteProfileState, 'isHydrated'>) => void;
   // Called after registration — saves onboarding data to the backend + in memory
   saveAthleteProfile:        (data: Omit<AthleteProfileState, 'isHydrated'>) => Promise<void>;
   // Mutates a single field in memory (call saveProfileToServer to persist)
@@ -56,20 +61,8 @@ const DEFAULT_PROFILE: Omit<AthleteProfileState, 'isHydrated'> = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-interface ProfileFromServer {
-  displayName?:    string;
-  gender?:         string;
-  weightCategory?: string;
-  weightKg?:       number;
-  heightCm?:       number;
-  recordMuscleUp?: number;
-  recordTraction?: number;
-  recordDips?:     number;
-  recordSquat?:    number;
-}
-
 // Maps raw server numbers to the store's string fields.
-function mapServerProfileToState(p: ProfileFromServer): Omit<AthleteProfileState, 'isHydrated'> {
+function mapServerProfileToState(p: UserProfileRaw): Omit<AthleteProfileState, 'isHydrated'> {
   return {
     displayName:    p.displayName ?? '',
     gender:         (p.gender === 'male' || p.gender === 'female') ? p.gender : '',
@@ -108,16 +101,24 @@ export const useAthleteProfileStore = create<AthleteProfileStore>()(
     ...DEFAULT_PROFILE,
     isHydrated: false,
 
-    // ── Called once after successful athlete registration ──────────────────────
+    // ── Called once after successful athlete registration (in-memory only) ──────
+    // The backend already persisted everything via the registration endpoint.
+    hydrateFromRegistration: (data) => {
+      set((state) => { Object.assign(state, data); state.isHydrated = true; });
+    },
+
+    // ── Called from the profile edit screen to push changes to the backend ────
     saveAthleteProfile: async (data) => {
+      // Optimistic update — UI reflects the change immediately
       set((state) => { Object.assign(state, data); });
       try {
-        await apiClient.put(
-          API_ENDPOINTS.userProfile.updateMyProfile,
-          buildServerPayload(data),
-        );
+        // Re-apply server-confirmed shape so coerced / computed fields are
+        // always reflected locally (e.g. server-side rounding of weight/height).
+        const confirmed = await callUpdateUserProfileApiEndpoint(buildServerPayload(data));
+        set((state) => { Object.assign(state, mapServerProfileToState(confirmed)); });
       } catch {
-        // Non-fatal — registration succeeded, profile can be filled later
+        // Non-fatal: the optimistic UI state stays for this session; the next
+        // explicit save will retry the sync.
       }
     },
 
@@ -133,13 +134,11 @@ export const useAthleteProfileStore = create<AthleteProfileStore>()(
     // ── Loads profile from backend (on app start / after login) ───────────────
     fetchProfileFromServer: async () => {
       try {
-        const response = await apiClient.get<BackendSuccessEnvelope<ProfileFromServer>>(
-          API_ENDPOINTS.userProfile.getMyProfile,
-        );
-        const profile = unwrapBackendEnvelope(response);
+        const profile = await callGetUserProfileApiEndpoint();
         set((state) => { Object.assign(state, mapServerProfileToState(profile)); });
       } catch {
-        // Network unavailable — store stays at defaults
+        // Network unavailable — store stays at defaults.
+        // The profile page will show empty fields the athlete can fill in.
       } finally {
         set((state) => { state.isHydrated = true; });
       }
@@ -148,17 +147,16 @@ export const useAthleteProfileStore = create<AthleteProfileStore>()(
     // ── Pushes current in-memory state to the backend ─────────────────────────
     saveProfileToServer: async () => {
       const s = get();
-      await apiClient.put(
-        API_ENDPOINTS.userProfile.updateMyProfile,
-        buildServerPayload({
-          displayName:    s.displayName,
-          gender:         s.gender,
-          weightCategory: s.weightCategory,
-          weightKg:       s.weightKg,
-          heightCm:       s.heightCm,
-          records:        s.records,
-        }),
-      );
+      // Re-apply server-confirmed shape so any coerced values are reflected locally
+      const confirmed = await callUpdateUserProfileApiEndpoint(buildServerPayload({
+        displayName:    s.displayName,
+        gender:         s.gender,
+        weightCategory: s.weightCategory,
+        weightKg:       s.weightKg,
+        heightCm:       s.heightCm,
+        records:        s.records,
+      }));
+      set((state) => { Object.assign(state, mapServerProfileToState(confirmed)); });
     },
 
     // ── Called on logout ──────────────────────────────────────────────────────

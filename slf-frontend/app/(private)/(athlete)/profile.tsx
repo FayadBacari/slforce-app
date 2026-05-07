@@ -1,89 +1,39 @@
-import React, { useEffect, useMemo } from 'react';
+import React from 'react';
 import { View, Text, ScrollView, TouchableOpacity, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@shared/theme/theme-provider';
-import { useAuthenticationStore } from '@stores/authentication-store';
-import { useAthleteProfileStore } from '@stores/athlete-profile-store';
 import { AppHeader } from '@shared/components/app-header/app-header';
 import { AppAvatar } from '@shared/components/app-avatar/app-avatar';
 import { buildAthleteProfileStyles } from '@screen-styles/athlete/profile.styles';
-
-// ─── Record cards config ──────────────────────────────────────────────────────
-type AthleteRecordKey = 'muscleUp' | 'traction' | 'dips' | 'squat';
-
-const RECORD_CARDS: {
-  key:      AthleteRecordKey;
-  label:    string;
-  colorKey: 'recordItemRed' | 'recordItemBlue' | 'recordItemGreen' | 'recordItemYellow';
-  isOnDark: boolean;
-}[] = [
-  { key: 'muscleUp', label: 'Muscle-Up', colorKey: 'recordItemRed',    isOnDark: false },
-  { key: 'traction', label: 'Traction',  colorKey: 'recordItemBlue',   isOnDark: true  },
-  { key: 'dips',     label: 'Dips',      colorKey: 'recordItemGreen',  isOnDark: false },
-  { key: 'squat',    label: 'Squat',     colorKey: 'recordItemYellow', isOnDark: false },
-];
-
-// ─── Gender options ───────────────────────────────────────────────────────────
-type AthleteGender = 'male' | 'female';
-const GENDER_OPTIONS: { key: AthleteGender; label: string; emoji: string }[] = [
-  { key: 'male',   label: 'HOMME', emoji: '👱'    },
-  { key: 'female', label: 'FEMME', emoji: '👱‍♀️' },
-];
-
-// ─── Weight categories ────────────────────────────────────────────────────────
-const WEIGHT_CATEGORIES_MALE   = ['-66', '-73', '-80', '-87', '-94', '-104', '+104'];
-const WEIGHT_CATEGORIES_FEMALE = ['-52', '-63', '-70', '+70'];
+import {
+  useAthleteProfileScreen,
+  RECORD_CARDS,
+  GENDER_OPTIONS,
+} from '@modules/users/presentation/hooks/use-athlete-profile-screen.hook';
 
 export default function AthleteProfilePage() {
-  const { theme }    = useTheme();
-  const loggedInUser = useAuthenticationStore((s) => s.loggedInUser);
-  const styles       = buildAthleteProfileStyles(theme);
+  const { theme } = useTheme();
+  const styles    = buildAthleteProfileStyles(theme);
 
-  // ── Profile store ───────────────────────────────────────────────────────────
   const {
-    isHydrated,
-    displayName,
+    loggedInUser,
     gender,
     weightCategory,
     weightKg,
     heightCm,
     records,
-    fetchProfileFromServer,
+    isEditingProfile,
+    setIsEditingProfile,
+    isEditingRecords,
+    setIsEditingRecords,
+    totalKilograms,
+    handleAtUsername,
+    currentGender,
+    weightCategoryList,
     updateAthleteProfileField,
     updateAthleteRecord,
     saveProfileToServer,
-  } = useAthleteProfileStore();
-
-  // Load from backend once on mount — MongoDB is the single source of truth
-  useEffect(() => {
-    if (!isHydrated) {
-      void fetchProfileFromServer();
-    }
-  }, [isHydrated, fetchProfileFromServer]);
-
-  // ── Edit modes ──────────────────────────────────────────────────────────────
-  const [isEditingProfile, setIsEditingProfile] = React.useState(false);
-  const [isEditingRecords, setIsEditingRecords] = React.useState(false);
-
-  // ── Derived ─────────────────────────────────────────────────────────────────
-  const totalKilograms = useMemo(() => {
-    return RECORD_CARDS.reduce((acc, card) => {
-      const val = parseInt(records[card.key], 10);
-      return acc + (Number.isFinite(val) ? val : 0);
-    }, 0);
-  }, [records]);
-
-  const handleAtUsername = (() => {
-    // Prefer display name from onboarding, fallback to account first+last name
-    if (displayName) return `@${displayName.toLowerCase().replace(/\s+/g, '_')}`;
-    const firstName = loggedInUser?.firstName ?? '';
-    const lastName  = loggedInUser?.lastName  ?? '';
-    return `@${(firstName + lastName).toLowerCase().replace(/\s+/g, '_') || 'athlete'}`;
-  })();
-
-  const currentGender = (gender === 'male' || gender === 'female') ? gender : 'male';
-  const weightCategoryList =
-    currentGender === 'female' ? WEIGHT_CATEGORIES_FEMALE : WEIGHT_CATEGORIES_MALE;
+  } = useAthleteProfileScreen();
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -107,7 +57,7 @@ export default function AthleteProfilePage() {
             </TouchableOpacity>
           </View>
 
-          {/* Avatar — blue circle with initials when no remote photo */}
+          {/* Avatar */}
           <View style={styles.avatarContainer}>
             <View style={styles.avatarBorder}>
               <AppAvatar
@@ -116,9 +66,7 @@ export default function AthleteProfilePage() {
                 sizeOverride={140}
               />
             </View>
-            <Text style={styles.nameText}>
-              {loggedInUser?.firstName || 'Athlète'}
-            </Text>
+            <Text style={styles.nameText}>{loggedInUser?.firstName || 'Athlète'}</Text>
             <Text style={styles.handleText}>{handleAtUsername}</Text>
           </View>
 
@@ -132,11 +80,7 @@ export default function AthleteProfilePage() {
                   <TouchableOpacity
                     key={option.key}
                     style={[styles.genderButton, isActive && styles.genderButtonActive]}
-                    onPress={() => {
-                      if (isEditingProfile) {
-                        void updateAthleteProfileField('gender', option.key);
-                      }
-                    }}
+                    onPress={() => { if (isEditingProfile) void updateAthleteProfileField('gender', option.key); }}
                     activeOpacity={isEditingProfile ? 0.7 : 1}
                   >
                     <Text style={styles.genderEmoji}>{option.emoji}</Text>
@@ -155,20 +99,15 @@ export default function AthleteProfilePage() {
             <View style={styles.weightGrid}>
               {weightCategoryList.map((cat) => {
                 const isActive = cat === weightCategory;
-                const label    = `${cat} kg`;
                 return (
                   <TouchableOpacity
                     key={cat}
                     style={[styles.weightChip, isActive && styles.weightChipActive]}
-                    onPress={() => {
-                      if (isEditingProfile) {
-                        void updateAthleteProfileField('weightCategory', cat);
-                      }
-                    }}
+                    onPress={() => { if (isEditingProfile) void updateAthleteProfileField('weightCategory', cat); }}
                     activeOpacity={isEditingProfile ? 0.7 : 1}
                   >
                     <Text style={[styles.weightChipLabel, isActive && styles.weightChipLabelActive]}>
-                      {label}
+                      {cat} kg
                     </Text>
                   </TouchableOpacity>
                 );

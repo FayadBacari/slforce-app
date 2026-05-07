@@ -1,27 +1,30 @@
-import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { StreamChat } from 'stream-chat';
 import { ConfigService } from '@nestjs/config';
 import { UsersRepository } from '../../auth/data/repositories/users.repository';
 import { AuthTokensService } from '../../auth/services/auth-tokens.service';
-import { UserDocument } from '../../auth/data/schemas/user.schema';
-import { generateDefaultAvatarUrl } from '../../../shared/utils/generate-avatar-url.util';
 import { UpdateProfileRequestDto } from '../presentation/dto/update-profile.dto';
-import {
-  AuthenticatedUserResponse,
-} from '../../auth/presentation/dto/auth-response.dto';
 import { UserRole } from '../../../shared/types/user-role.enum';
-import type {
-  PrivacySettingsResponseDto,
-} from '../presentation/dto/privacy-settings.dto';
+import { formatUserForClient } from '../../../shared/utils/format-user-for-client.util';
+import type { AuthenticatedUserResponse } from '../../auth/presentation/dto/auth-response.dto';
+import type { PrivacySettingsResponseDto } from '../presentation/dto/privacy-settings.dto';
 
 export interface PlatformStatsResponse {
   coachCount:   number;
   athleteCount: number;
 }
 
+// Named alias for the exact element type that upsertUsers() expects.
+// Stream's SDK types only declare standard fields — custom fields such as
+// `showOnlineStatus` are valid at runtime but require an `as unknown` cast
+// to silence TypeScript. The alias removes the verbose inline Parameters<...>.
+type StreamUserInput = Parameters<InstanceType<typeof StreamChat>['upsertUsers']>[0][0];
+
 @Injectable()
 export class UsersService implements OnModuleInit {
+  private readonly logger = new Logger(UsersService.name);
+
   // Server-side Stream client — used to sync the showOnlineStatus flag to Stream
   // so that other mobile clients can read it from channel members immediately.
   private streamServerClient!: StreamChat;
@@ -33,6 +36,7 @@ export class UsersService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
+    // Stream API keys are validated at startup by the Joi schema.
     const apiKey    = this.configService.getOrThrow<string>('STREAM_API_KEY');
     const apiSecret = this.configService.getOrThrow<string>('STREAM_API_SECRET');
     // getInstance() returns the shared singleton — same instance as ChatService.
@@ -45,7 +49,7 @@ export class UsersService implements OnModuleInit {
     if (!userInDatabase) {
       throw new NotFoundException('Utilisateur introuvable.');
     }
-    return this.formatUserForClient(userInDatabase);
+    return formatUserForClient(userInDatabase);
   }
 
   // PUT /users/profile — updates allowed fields and returns the new profile
@@ -57,7 +61,7 @@ export class UsersService implements OnModuleInit {
     if (!updatedUser) {
       throw new NotFoundException('Utilisateur introuvable.');
     }
-    return this.formatUserForClient(updatedUser);
+    return formatUserForClient(updatedUser);
   }
 
   // GET /users/stats — returns platform-wide counts (public endpoint, no auth)
@@ -94,10 +98,9 @@ export class UsersService implements OnModuleInit {
     // 3. Best-effort: overwrite the Stream user with a neutral identity so
     //    ongoing conversations show "Compte Supprimé" instead of the real name/photo.
     try {
-      await this.streamServerClient.upsertUsers([{
-        id:   userId,
-        name: 'Compte Supprimé',
-      } as unknown as Parameters<typeof this.streamServerClient.upsertUsers>[0][0]]);
+      await this.streamServerClient.upsertUsers([
+        { id: userId, name: 'Compte Supprimé' } as unknown as StreamUserInput,
+      ]);
     } catch {
       // Non-fatal — chat will update on the next cache refresh
     }
@@ -140,16 +143,13 @@ export class UsersService implements OnModuleInit {
     // committed above is the source of truth. We log the error and move on.
     if (settings.showOnlineStatus !== undefined) {
       try {
-        // Stream's UserResponse type only declares standard fields — custom fields
-        // are accepted at runtime but require a cast to silence TypeScript.
-        await this.streamServerClient.upsertUsers([{
-          id:               userId,
-          showOnlineStatus: settings.showOnlineStatus,
-        } as unknown as Parameters<typeof this.streamServerClient.upsertUsers>[0][0]]);
+        await this.streamServerClient.upsertUsers([
+          { id: userId, showOnlineStatus: settings.showOnlineStatus } as unknown as StreamUserInput,
+        ]);
       } catch (streamError) {
         // Non-fatal — privacy flag is saved in MongoDB; Stream will reflect it
         // the next time the user is fetched by the chat service.
-        console.error('[UsersService] Stream upsertUsers failed (non-fatal):', streamError);
+        this.logger.error('Stream upsertUsers failed (non-fatal):', streamError);
       }
     }
 
@@ -159,36 +159,4 @@ export class UsersService implements OnModuleInit {
     };
   }
 
-  // ─── INTERNAL ────────────────────────────────────────────────────────────
-  private formatUserForClient(userDocument: UserDocument): AuthenticatedUserResponse {
-    return {
-      id:              (userDocument._id as Types.ObjectId).toString(),
-      email:           userDocument.email,
-      firstName:       userDocument.firstName,
-      lastName:        userDocument.lastName,
-      displayName:     userDocument.displayName,
-      role:            userDocument.role,
-      // Always return a valid avatar URL — existing accounts without one get a
-      // generated blue-circle-initials URL so no screen ever shows a blank avatar.
-      profilePhotoUrl:
-        userDocument.profilePhotoUrl ||
-        generateDefaultAvatarUrl(userDocument.firstName, userDocument.lastName),
-      disciplines:     userDocument.disciplines ?? [],
-      // Coach-specific fields — present only when filled by the coach
-      speciality:      userDocument.speciality,
-      bio:             userDocument.bio,
-      location:        userDocument.location,
-      monthlyRate:     userDocument.monthlyRate,
-      experienceYears: userDocument.experienceYears,
-      // Athlete-specific fields — present only when filled by the athlete
-      gender:          userDocument.gender,
-      weightCategory:  userDocument.weightCategory,
-      weightKg:        userDocument.weightKg,
-      heightCm:        userDocument.heightCm,
-      recordMuscleUp:  userDocument.recordMuscleUp,
-      recordTraction:  userDocument.recordTraction,
-      recordDips:      userDocument.recordDips,
-      recordSquat:     userDocument.recordSquat,
-    };
-  }
 }

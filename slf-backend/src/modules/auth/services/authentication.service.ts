@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { randomBytes, createHash } from 'crypto';
@@ -14,11 +15,8 @@ import { PasswordResetRepository } from '../data/repositories/password-reset.rep
 import { EmailService } from '../../../core/email/email.service';
 import { RegisterRequestDto } from '../presentation/dto/register.dto';
 import { LoginRequestDto } from '../presentation/dto/login.dto';
-import {
-  AuthenticatedUserResponse,
-  AuthenticationSuccessResponse,
-} from '../presentation/dto/auth-response.dto';
-import { UserDocument } from '../data/schemas/user.schema';
+import { AuthenticationSuccessResponse } from '../presentation/dto/auth-response.dto';
+import { formatUserForClient } from '../../../shared/utils/format-user-for-client.util';
 import { generateDefaultAvatarUrl } from '../../../shared/utils/generate-avatar-url.util';
 
 // The auth flow's "use case" layer.
@@ -26,6 +24,7 @@ import { generateDefaultAvatarUrl } from '../../../shared/utils/generate-avatar-
 // public auth API. Controllers simply delegate to this service.
 @Injectable()
 export class AuthenticationService {
+  private readonly logger = new Logger(AuthenticationService.name);
   private readonly resetPasswordBaseUrl: string;
 
   constructor(
@@ -96,7 +95,7 @@ export class AuthenticationService {
     });
 
     return {
-      user:         this.formatUserForClient(newlyCreatedUser),
+      user:         formatUserForClient(newlyCreatedUser),
       accessToken:  issuedTokens.accessToken,
       refreshToken: issuedTokens.refreshToken,
     };
@@ -135,7 +134,7 @@ export class AuthenticationService {
     });
 
     return {
-      user:         this.formatUserForClient(userInDatabase),
+      user:         formatUserForClient(userInDatabase),
       accessToken:  issuedTokens.accessToken,
       refreshToken: issuedTokens.refreshToken,
     };
@@ -167,7 +166,7 @@ export class AuthenticationService {
     });
 
     return {
-      user:         this.formatUserForClient(userInDatabase),
+      user:         formatUserForClient(userInDatabase),
       accessToken:  issuedTokens.accessToken,
       refreshToken: issuedTokens.refreshToken,
     };
@@ -200,11 +199,20 @@ export class AuthenticationService {
 
     const resetUrl = `${this.resetPasswordBaseUrl}?token=${plainToken}`;
 
-    await this.emailService.sendPasswordResetEmail({
-      to:        user.email,
-      firstName: user.firstName,
-      resetUrl,
-    });
+    // Best-effort send — we log failures but NEVER let an email error surface
+    // as a 500 to the client. Two reasons:
+    //   1. Returning 500 only when the email exists leaks which addresses are
+    //      registered (enumeration attack — breaks our constant-response guarantee).
+    //   2. The reset token is already persisted; the user can simply request again.
+    try {
+      await this.emailService.sendPasswordResetEmail({
+        to:        user.email,
+        firstName: user.firstName,
+        resetUrl,
+      });
+    } catch (emailError) {
+      this.logger.error('Password reset email delivery failed', emailError);
+    }
   }
 
   // ─── RESET PASSWORD ───────────────────────────────────────────────────────
@@ -229,38 +237,4 @@ export class AuthenticationService {
     ]);
   }
 
-  // ─── INTERNAL HELPERS ────────────────────────────────────────────────────
-  private formatUserForClient(userDocument: UserDocument): AuthenticatedUserResponse {
-    // Guarantee profilePhotoUrl is always set — existing accounts created before
-    // the automatic avatar generation get a generated URL on the fly.
-    const profilePhotoUrl =
-      userDocument.profilePhotoUrl ||
-      generateDefaultAvatarUrl(userDocument.firstName, userDocument.lastName);
-
-    return {
-      id:              (userDocument._id as Types.ObjectId).toString(),
-      email:           userDocument.email,
-      firstName:       userDocument.firstName,
-      lastName:        userDocument.lastName,
-      displayName:     userDocument.displayName,
-      role:            userDocument.role,
-      profilePhotoUrl,
-      disciplines:     userDocument.disciplines   ?? [],
-      // Coach-specific fields
-      speciality:      userDocument.speciality,
-      bio:             userDocument.bio,
-      location:        userDocument.location,
-      monthlyRate:     userDocument.monthlyRate,
-      experienceYears: userDocument.experienceYears,
-      // Athlete-specific fields
-      gender:          userDocument.gender,
-      weightCategory:  userDocument.weightCategory,
-      weightKg:        userDocument.weightKg,
-      heightCm:        userDocument.heightCm,
-      recordMuscleUp:  userDocument.recordMuscleUp,
-      recordTraction:  userDocument.recordTraction,
-      recordDips:      userDocument.recordDips,
-      recordSquat:     userDocument.recordSquat,
-    };
-  }
 }

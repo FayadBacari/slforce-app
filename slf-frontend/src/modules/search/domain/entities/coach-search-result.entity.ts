@@ -9,6 +9,7 @@ export interface CoachSearchResultEntity {
 
   // Coach profile fields — undefined when not yet filled by the coach
   disciplines:      string[];   // badge array — empty [] when not yet set
+  speciality?:      string;
   bio?:             string;
   location?:        string;
   monthlyRate?:     number;

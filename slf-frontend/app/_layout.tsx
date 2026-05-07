@@ -3,7 +3,6 @@ import React, { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as SplashScreen from 'expo-splash-screen';
 import { StripeProvider } from '@stripe/stripe-react-native';
 import { ThemeProvider } from '@shared/theme/theme-provider';
@@ -16,20 +15,6 @@ const STRIPE_PUBLISHABLE_KEY = process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY ??
 
 // Keep the splash screen visible while we restore the user's session
 SplashScreen.preventAutoHideAsync();
-
-// Configure the global TanStack Query client
-// - staleTime: data is considered fresh for 60 seconds (no redundant refetches)
-// - gcTime: unused data is kept in memory for 5 minutes
-// - retry: failed requests are retried once automatically
-const globalQueryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 60 * 1000,
-      gcTime:    5 * 60 * 1000,
-      retry:     1,
-    },
-  },
-});
 
 // The root layout wraps the entire application with all global providers.
 // Order matters: outer providers are available to inner ones.
@@ -64,17 +49,15 @@ export default function RootLayout() {
           merchantIdentifier="merchant.com.slforce.app"
           urlScheme="slforce"
         >
-          <QueryClientProvider client={globalQueryClient}>
-            <ThemeProvider>
-              <LanguageProvider>
-                <Stack screenOptions={{ headerShown: false }}>
-                  <Stack.Screen name="index" />
-                  <Stack.Screen name="(public)" />
-                  <Stack.Screen name="(private)" />
-                </Stack>
-              </LanguageProvider>
-            </ThemeProvider>
-          </QueryClientProvider>
+          <ThemeProvider>
+            <LanguageProvider>
+              <Stack screenOptions={{ headerShown: false }}>
+                <Stack.Screen name="index" />
+                <Stack.Screen name="(public)" />
+                <Stack.Screen name="(private)" />
+              </Stack>
+            </LanguageProvider>
+          </ThemeProvider>
         </StripeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

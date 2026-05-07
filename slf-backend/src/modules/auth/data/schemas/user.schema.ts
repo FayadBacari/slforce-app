@@ -6,10 +6,10 @@ import { UserRole } from '../../../../shared/types/user-role.enum';
 // `userDocument.id` is the auto-stringified ObjectId for convenient use.
 export type UserDocument = User & Document<Types.ObjectId>;
 
-// The "User" collection holds account-level data (credentials, identity).
-// Role-specific data (athlete physical records / coach speciality) lives in
-// separate collections (AthleteProfile / CoachProfile) — this keeps the User
-// document small and queries fast.
+// The "User" collection holds all account and profile data in a single document.
+// Coach-specific fields (speciality, bio, monthlyRate…) and athlete-specific
+// fields (gender, weightCategory, records…) are stored directly here alongside
+// credentials — no separate AthleteProfile / CoachProfile collections.
 @Schema({
   collection:   'users',
   timestamps:   true,   // adds createdAt / updatedAt automatically
@@ -128,3 +128,14 @@ export class User {
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
+
+// ─── Compound indexes ──────────────────────────────────────────────────────────
+// Without these, every search-screen load is a full collection scan.
+//
+// 1. Search queries: find recent coaches/athletes filtered by role + isActive,
+//    sorted by createdAt. The sort field must be last in the compound index.
+UserSchema.index({ role: 1, isActive: 1, createdAt: -1 });
+
+// 2. Platform-stats query: countDocuments({ role, isActive }) — omits the sort
+//    so a lighter index without createdAt covers it efficiently.
+UserSchema.index({ role: 1, isActive: 1 });

@@ -1,13 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { apiClient } from '@core/api/api-client';
-import { API_ENDPOINTS } from '@core/api/api-endpoints';
-import { unwrapBackendEnvelope, type BackendSuccessEnvelope } from '@core/api/api-response-envelope';
-
-// ─── Shapes ───────────────────────────────────────────────────────────────────
-interface PrivacySettings {
-  isProfilePublic:  boolean;
-  showOnlineStatus: boolean;
-}
+import { userProfileRepository } from '../../data/repositories/user-profile.repository';
+import type { PrivacySettingsEntity } from '../../domain/entities/privacy-settings.entity';
 
 // ─── usePrivacySettings ───────────────────────────────────────────────────────
 //
@@ -16,13 +9,13 @@ interface PrivacySettings {
 // the UI reflects the change instantly; a backend error rolls it back to the
 // pre-update state).
 export function usePrivacySettings() {
-  const [settings, setSettings]     = useState<PrivacySettings>({
+  const [settings, setSettings]   = useState<PrivacySettingsEntity>({
     isProfilePublic:  true,
     showOnlineStatus: true,
   });
-  const [isLoading, setIsLoading]   = useState(true);
-  const [isSaving,  setIsSaving]    = useState(false);
-  const [error,     setError]       = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving,  setIsSaving]  = useState(false);
+  const [error,     setError]     = useState<string | null>(null);
 
   // ── Load on mount ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -30,14 +23,10 @@ export function usePrivacySettings() {
 
     async function load() {
       try {
-        const response = await apiClient.get<BackendSuccessEnvelope<PrivacySettings>>(
-          API_ENDPOINTS.userProfile.getPrivacySettings,
-        );
-        if (!cancelled) {
-          setSettings(unwrapBackendEnvelope(response));
-        }
+        const data = await userProfileRepository.getPrivacySettings();
+        if (!cancelled) setSettings(data);
       } catch {
-        // Non-blocking — keep defaults if the request fails
+        // Non-blocking — keep defaults if the request fails.
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -48,29 +37,24 @@ export function usePrivacySettings() {
   }, []);
 
   // ── Update one flag ──────────────────────────────────────────────────────
-  const update = useCallback(async (patch: Partial<PrivacySettings>) => {
-    // Capture the current state for rollback BEFORE applying the optimistic update.
-    // We use the functional setState form so `previousSettings` is populated
-    // synchronously from the latest committed state — safe even with concurrent mode.
-    let previousSettings: PrivacySettings = { isProfilePublic: true, showOnlineStatus: true };
+  const update = useCallback(async (patch: Partial<PrivacySettingsEntity>) => {
+    // Capture the current state for rollback BEFORE the optimistic update.
+    let previousSettings: PrivacySettingsEntity = { isProfilePublic: true, showOnlineStatus: true };
 
     setSettings((prev) => {
-      previousSettings = prev;       // snapshot the real value before the optimistic write
-      return { ...prev, ...patch };  // optimistic: reflect the change immediately
+      previousSettings = prev;
+      return { ...prev, ...patch };
     });
 
     setIsSaving(true);
     setError(null);
 
     try {
-      const response = await apiClient.patch<BackendSuccessEnvelope<PrivacySettings>>(
-        API_ENDPOINTS.userProfile.updatePrivacySettings,
-        patch,
-      );
-      // Replace the optimistic value with what the server confirmed
-      setSettings(unwrapBackendEnvelope(response));
+      const confirmed = await userProfileRepository.updatePrivacySettings(patch);
+      // Replace the optimistic value with what the server confirmed.
+      setSettings(confirmed);
     } catch {
-      // Roll back to the state before the optimistic update
+      // Roll back to the state before the optimistic update.
       setSettings(previousSettings);
       setError('Impossible de sauvegarder les préférences. Réessayez.');
     } finally {

@@ -15,6 +15,11 @@ export interface StripeAccountStatus {
 
 type StripeInstance = InstanceType<typeof Stripe>;
 
+// Derived from the SDK so the type is always correct regardless of Stripe version.
+// Using Stripe.PaymentIntent directly triggers TS2694 on stripe@22 because the CJS
+// `export = Stripe` pattern makes the namespace unavailable through the default import.
+type StripePaymentIntent = Awaited<ReturnType<StripeInstance['paymentIntents']['retrieve']>>;
+
 @Injectable()
 export class StripeConnectService {
   private readonly stripe: StripeInstance;
@@ -29,8 +34,10 @@ export class StripeConnectService {
     const secretKey = this.configService.getOrThrow<string>('STRIPE_SECRET_KEY');
     this.stripe = new Stripe(secretKey);
 
-    const appUrl    = this.configService.get<string>('APP_URL', 'http://localhost:5132');
-    const apiPrefix = this.configService.get<string>('API_PREFIX', 'api/v1');
+    // Use the typed config namespace so values are always resolved through the
+    // same Joi-validated layer — no raw process.env bypasses.
+    const appUrl    = this.configService.getOrThrow<string>('app.appUrl');
+    const apiPrefix = this.configService.getOrThrow<string>('app.apiPrefix');
 
     this.stripeReturnUrl  = `${appUrl}/${apiPrefix}/payments/stripe/return`;
     this.stripeRefreshUrl = `${appUrl}/${apiPrefix}/payments/stripe/refresh`;
@@ -161,7 +168,7 @@ export class StripeConnectService {
   // ─── Retrieve a PaymentIntent (for server-side verification) ─────────────
   // Called by the confirm endpoint to check that `status === 'succeeded'`
   // before recording the payment in our database.
-  async retrievePaymentIntent(paymentIntentId: string) {
+  async retrievePaymentIntent(paymentIntentId: string): Promise<StripePaymentIntent> {
     return this.stripe.paymentIntents.retrieve(paymentIntentId);
   }
 

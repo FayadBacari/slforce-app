@@ -1,4 +1,4 @@
-import React, { memo, useState } from 'react';
+import React, { memo, useState, useEffect } from 'react';
 import { View, Text } from 'react-native';
 import { Image } from 'expo-image';
 import { useTheme } from '@shared/theme/theme-provider';
@@ -49,6 +49,12 @@ export const AppAvatar = memo(function AppAvatar({
   const styles = buildAppAvatarStyles(theme, size, sizeOverride);
 
   const [imageLoadFailed, setImageLoadFailed] = useState(false);
+
+  // Reset the error flag whenever the URL changes so a freshly-uploaded photo
+  // is always attempted, even if a previous URL failed to load.
+  useEffect(() => {
+    setImageLoadFailed(false);
+  }, [photoUrl]);
 
   // Resolve display name to a non-empty string so initials are never '?'
   // when the parent forgets to pass a meaningful value.

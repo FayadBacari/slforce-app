@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { apiClient } from '@core/api/api-client';
-import { API_ENDPOINTS } from '@core/api/api-endpoints';
-import { unwrapBackendEnvelope, type BackendSuccessEnvelope } from '@core/api/api-response-envelope';
+import {
+  callGetUserProfileApiEndpoint,
+  callUpdateUserProfileApiEndpoint,
+  type UserProfileRaw,
+} from '@modules/users/data/data-sources/user-profile-api.data-source';
 
 // ─── Shape ───────────────────────────────────────────────────────────────────
 
@@ -18,6 +20,9 @@ export interface CoachProfileState {
 }
 
 interface CoachProfileActions {
+  // Called after registration — populates in-memory state from the onboarding form.
+  // Does NOT make a network call: the registration endpoint already persisted the data.
+  hydrateFromRegistration: (data: Omit<CoachProfileState, 'isHydrated'>) => void;
   // Called after registration — saves onboarding data to the backend + in memory
   saveCoachProfile:        (data: Omit<CoachProfileState, 'isHydrated'>) => Promise<void>;
   // Mutates a single text field in memory (no network call — use saveProfileToServer to persist)
@@ -48,17 +53,6 @@ const DEFAULT_PROFILE: Omit<CoachProfileState, 'isHydrated'> = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-// Response shape from GET /users/profile (coach-specific fields only)
-interface ProfileFromServer {
-  displayName?:     string;
-  speciality?:      string;
-  bio?:             string;
-  location?:        string;
-  monthlyRate?:     number;
-  experienceYears?: number;
-  disciplines?:     string[];
-}
-
 // Builds the PUT body sent to PUT /users/profile.
 // Omits undefined so we don't overwrite filled fields with blanks.
 function buildServerPayload(data: Omit<CoachProfileState, 'isHydrated'>) {
@@ -74,7 +68,7 @@ function buildServerPayload(data: Omit<CoachProfileState, 'isHydrated'>) {
 }
 
 // Maps a raw server response to the in-memory store shape.
-function mapServerProfileToState(profile: ProfileFromServer): Omit<CoachProfileState, 'isHydrated'> {
+function mapServerProfileToState(profile: UserProfileRaw): Omit<CoachProfileState, 'isHydrated'> {
   return {
     displayName:     profile.displayName     ?? '',
     speciality:      profile.speciality      ?? '',
@@ -93,18 +87,24 @@ export const useCoachProfileStore = create<CoachProfileStore>()(
     ...DEFAULT_PROFILE,
     isHydrated: false,
 
-    // ── Called once after successful coach registration ────────────────────────
+    // ── Called once after successful coach registration (in-memory only) ─────────
+    // The backend already persisted everything via the registration endpoint.
+    hydrateFromRegistration: (data) => {
+      set((state) => { Object.assign(state, data); state.isHydrated = true; });
+    },
+
+    // ── Called from the profile edit screen to push changes to the backend ────
     saveCoachProfile: async (data) => {
+      // Optimistic update — UI reflects the change immediately
       set((state) => { Object.assign(state, data); });
-      // Best-effort push — if it fails the data is still in memory for this session
-      // and will be re-saved the next time the user opens the profile edit screen.
       try {
-        await apiClient.put(
-          API_ENDPOINTS.userProfile.updateMyProfile,
-          buildServerPayload(data),
-        );
+        // Sync with server and re-apply the confirmed shape so coerced / computed
+        // fields (e.g. server-side trimming) are always reflected locally.
+        const confirmed = await callUpdateUserProfileApiEndpoint(buildServerPayload(data));
+        set((state) => { Object.assign(state, mapServerProfileToState(confirmed)); });
       } catch {
-        // Non-fatal — the registration itself succeeded
+        // Non-fatal: the optimistic UI state stays for this session; the next
+        // explicit save will retry the sync.
       }
     },
 
@@ -120,14 +120,11 @@ export const useCoachProfileStore = create<CoachProfileStore>()(
     // ── Loads profile from backend (on app start / after login) ───────────────
     fetchProfileFromServer: async () => {
       try {
-        const response = await apiClient.get<BackendSuccessEnvelope<ProfileFromServer>>(
-          API_ENDPOINTS.userProfile.getMyProfile,
-        );
-        const profile = unwrapBackendEnvelope(response);
+        const profile = await callGetUserProfileApiEndpoint();
         set((state) => { Object.assign(state, mapServerProfileToState(profile)); });
       } catch {
-        // Network unavailable — store stays at defaults
-        // The profile page will show empty fields that the coach can fill in
+        // Network unavailable — store stays at defaults.
+        // The profile page will show empty fields the coach can fill in.
       } finally {
         set((state) => { state.isHydrated = true; });
       }
@@ -144,10 +141,9 @@ export const useCoachProfileStore = create<CoachProfileStore>()(
         description:     get().description,
         skills:          get().skills,
       };
-      await apiClient.put(
-        API_ENDPOINTS.userProfile.updateMyProfile,
-        buildServerPayload(snapshot),
-      );
+      // Re-apply server-confirmed shape so any coerced values are reflected locally
+      const confirmed = await callUpdateUserProfileApiEndpoint(buildServerPayload(snapshot));
+      set((state) => { Object.assign(state, mapServerProfileToState(confirmed)); });
     },
 
     // ── Called on logout ──────────────────────────────────────────────────────

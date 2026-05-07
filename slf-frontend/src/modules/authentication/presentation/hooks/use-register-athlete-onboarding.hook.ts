@@ -27,7 +27,7 @@ export function useRegisterAthleteOnboarding() {
   const saveLoginData      = useAuthenticationStore((s) => s.saveLoginDataAfterSuccessfulLogin);
   const pendingAccount     = usePendingRegistrationStore((s) => s.pendingAccount);
   const clearPending       = usePendingRegistrationStore((s) => s.clearPendingAccountData);
-  const saveAthleteProfile = useAthleteProfileStore((s) => s.saveAthleteProfile);
+  const hydrateAthleteProfile = useAthleteProfileStore((s) => s.hydrateFromRegistration);
 
   const [currentStep, setCurrentStep] = useState(1);
   const [fadeAnim]                    = useState(new Animated.Value(1));
@@ -97,8 +97,9 @@ export function useRegisterAthleteOnboarding() {
         athleteProfile: profileData,
       });
 
-      // Persist profile data locally so the profile screen can read it immediately
-      await saveAthleteProfile(profileData);
+      // Populate the in-memory store from the onboarding form data.
+      // No network call needed — the registration endpoint already persisted everything.
+      hydrateAthleteProfile(profileData);
 
       clearPending();
 
@@ -131,7 +132,7 @@ export function useRegisterAthleteOnboarding() {
     } finally {
       setLoading(false);
     }
-  }, [pendingAccount, profileData, clearPending, saveLoginData, router]);
+  }, [pendingAccount, profileData, hydrateAthleteProfile, clearPending, saveLoginData, router]);
 
   // ── canProceed per step ──────────────────────────────────────────────────────
   const canProceed = useMemo(() => {

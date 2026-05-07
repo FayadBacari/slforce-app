@@ -17,10 +17,23 @@ export interface AppError {
 
 // Converts ANY type of error (Axios, network, unknown) into a clean AppError.
 export function convertAnyErrorToAppError(unknownError: unknown): AppError {
-  // ── HTTP errors from the server (e.g. 400, 401, 404, 500) ────────────────
+  // ── Axios errors (HTTP response OR no network) ────────────────────────────
   if (unknownError instanceof AxiosError) {
-    const serverResponse = unknownError.response?.data as BackendErrorResponse | undefined;
-    const statusCode = unknownError.response?.status ?? null;
+    // No response at all → device is offline or server is unreachable.
+    // Checking !response is more robust than matching on the message string
+    // 'Network Error', which can differ between Axios versions and environments.
+    if (!unknownError.response) {
+      return {
+        userFriendlyMessage: 'Pas de connexion internet. Vérifie ton réseau et réessaie.',
+        technicalMessage: unknownError.message,
+        statusCode: null,
+        fieldErrors: null,
+      };
+    }
+
+    // HTTP error with a server response (400, 401, 404, 500, …)
+    const serverResponse = unknownError.response.data as BackendErrorResponse | undefined;
+    const statusCode     = unknownError.response.status;
 
     return {
       userFriendlyMessage: serverResponse?.message ?? getMessageForStatusCode(statusCode),
@@ -29,16 +42,6 @@ export function convertAnyErrorToAppError(unknownError: unknown): AppError {
       fieldErrors: serverResponse?.errors
         ? flattenServerFieldErrors(serverResponse.errors)
         : null,
-    };
-  }
-
-  // ── No internet connection ─────────────────────────────────────────────────
-  if (unknownError instanceof Error && unknownError.message === 'Network Error') {
-    return {
-      userFriendlyMessage: 'Pas de connexion internet. Vérifie ton réseau et réessaie.',
-      technicalMessage: unknownError.message,
-      statusCode: null,
-      fieldErrors: null,
     };
   }
 

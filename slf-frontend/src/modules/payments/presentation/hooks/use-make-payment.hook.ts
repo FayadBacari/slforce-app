@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { useStripe } from '@stripe/stripe-react-native';
 import { paymentsRepository } from '../../data/repositories/payments.repository';
+import { convertAnyErrorToAppError } from '@core/api/api-error-handler';
 
 // ─── Status union ─────────────────────────────────────────────────────────────
 export type PaymentStatus = 'idle' | 'loading' | 'success' | 'cancelled' | 'error';
@@ -104,11 +105,8 @@ export function useMakePayment() {
       setStatus('success');
 
     } catch (err: unknown) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : 'Impossible d\'initialiser le paiement. Réessayez.';
-      setErrorMessage(message);
+      const appError = convertAnyErrorToAppError(err);
+      setErrorMessage(appError.userFriendlyMessage);
       setStatus('error');
     }
   }, [initPaymentSheet, presentPaymentSheet]);

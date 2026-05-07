@@ -3,78 +3,18 @@ import type { Channel, Event } from 'stream-chat';
 import { prewarmConversationChannel, streamChatClient } from '@core/stream-chat/stream-chat-client';
 import { useAuthenticationStore } from '@stores/authentication-store';
 import type { MessageEntity } from '../../domain/entities/message.entity';
+import { uploadFileToStream } from '../../data/utils/stream-file-uploader';
+import { convertStreamMessageToMessageEntity } from '../../domain/mappers/stream-message.mapper';
 
-// Stream Chat's internal message type (union of local + server messages)
-type AnyStreamMessage = Parameters<Channel['sendMessage']>[0] & {
-  id?: string;
-  text?: string;
-  user?: { id?: string; name?: string; image?: string };
-  created_at?: string | Date;
-  attachments?: Array<{
-    type?: string;
-    asset_url?: string;
-    image_url?: string;
-    thumb_url?: string;
-    title?: string;
-    mime_type?: string;
-  }>;
-};
-
-// ─── STREAM FILE UPLOAD (React Native) ───────────────────────────────────────
-// The Stream Chat JS SDK internally tries to call `.split()` on the uri when
-// a FormData or plain object is passed — it only works with browser File/Buffer.
-// In React Native we bypass the SDK and call the REST API directly.
-// RN's native fetch handles { uri, name, type } inside FormData natively.
-
-const STREAM_API_KEY = process.env.EXPO_PUBLIC_STREAM_CHAT_API_KEY ?? '';
-
-async function uploadFileToStream(params: {
-  fileUri:   string;
-  fileName:  string;
-  mimeType:  string;
-  isImage:   boolean;
-  channelId: string;
-}): Promise<string> {
-  const { fileUri, fileName, mimeType, isImage, channelId } = params;
-
-  // Get the current JWT from the Stream singleton
-  const authToken = (streamChatClient as unknown as { tokenManager: { token: string } })
-    .tokenManager?.token ?? '';
-
-  const endpoint = isImage ? 'image' : 'file';
-  const url =
-    `${streamChatClient.baseURL}/channels/messaging/${channelId}/${endpoint}` +
-    `?api_key=${STREAM_API_KEY}`;
-
-  const form = new FormData();
-  // React Native accepts { uri, name, type } as a FormData file entry
-  form.append('file', { uri: fileUri, name: fileName, type: mimeType } as unknown as Blob);
-
-  const response = await fetch(url, {
-    method:  'POST',
-    body:    form,
-    headers: {
-      Authorization:       authToken,
-      'stream-auth-type':  'jwt',
-    },
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Stream upload failed (${response.status}): ${body}`);
-  }
-
-  const json = (await response.json()) as { file: string };
-  return json.file;
-}
+// File upload and message conversion helpers are in dedicated modules:
+//   data/utils/stream-file-uploader.ts
+//   domain/mappers/stream-message.mapper.ts
 
 // ─── PERFORMANCE STRATEGY ─────────────────────────────────────────────────────
-// 1. Optimistic updates: the message appears INSTANTLY in the list when sent,
-//    before we get confirmation from the server. If the server fails, we mark it red.
-// 2. FlashList: the message list uses FlashList which is 10x faster than FlatList.
-// 3. useRef for the channel: we keep the channel in a ref so it doesn't trigger
-//    re-renders when it's updated by real-time events.
-// 4. Pagination: we load the last 30 messages first and load older ones on demand.
+// 1. Optimistic updates  : messages appear instantly, marked 'failed' on error.
+// 2. FlashList            : ~10× faster than FlatList for message lists.
+// 3. useRef for channel   : avoids re-renders triggered by real-time updates.
+// 4. Pagination           : loads last 30 messages, then older on scroll-to-top.
 
 // File selected by the user before upload
 export interface AttachmentFile {
@@ -104,44 +44,6 @@ export function useChatScreen(conversationChannelId: string) {
   // Reactive counterpart of otherParticipantIdRef — triggers a re-render once the
   // channel state resolves so the header menu can use the correct participant ID.
   const [otherParticipantId, setOtherParticipantId]   = useState('');
-
-  // Converts any Stream message object to our clean MessageEntity.
-  // We use 'unknown' here because Stream Chat has multiple overlapping message types.
-  function convertStreamMessageToMessageEntity(streamMessage: unknown): MessageEntity {
-    // Safely cast to a readable shape — we never trust external types blindly
-    const msg = streamMessage as {
-      id?: string;
-      text?: string;
-      user?: { id?: string; name?: string; image?: string };
-      created_at?: string | Date;
-      attachments?: Array<{
-        type?: string;
-        asset_url?: string;
-        image_url?: string;
-        thumb_url?: string;
-        title?: string;
-        mime_type?: string;
-      }>;
-    };
-
-    return {
-      id:          msg.id ?? `temp-${Date.now()}`,
-      text:        msg.text,
-      authorId:    msg.user?.id ?? '',
-      authorName:  msg.user?.name ?? '',
-      authorPhoto: msg.user?.image,
-      sentAt:      msg.created_at ? new Date(msg.created_at) : new Date(),
-      status:      'sent',
-      attachments: (msg.attachments ?? []).map((attachment) => ({
-        id:        attachment.asset_url ?? attachment.thumb_url ?? String(Date.now()),
-        type:      (attachment.type as 'image' | 'video' | 'file') ?? 'file',
-        url:       attachment.asset_url ?? attachment.image_url ?? '',
-        name:      attachment.title,
-        sizeBytes: undefined,
-        mimeType:  attachment.mime_type,
-      })),
-    };
-  }
 
   // Opens the conversation channel and loads the initial messages
   const loadConversationAndMessages = useCallback(async () => {

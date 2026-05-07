@@ -32,33 +32,3 @@ export interface LoggedInUser {
   recordSquat?:     number;
 }
 
-// The full athlete profile fetched from the API
-export interface AthleteProfile {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  profilePhotoUrl: string | undefined;
-  sport: string;
-  level: 'beginner' | 'intermediate' | 'advanced' | 'professional';
-  weightInKg: number | undefined;
-  heightInCm: number | undefined;
-  goals: string;
-  bio: string;
-}
-
-// The full coach profile fetched from the API
-export interface CoachProfile {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  profilePhotoUrl: string | undefined;
-  specialty: string;
-  yearsOfExperience: number;
-  hourlyRateInEuros: number;
-  bio: string;
-  rating: number;
-  numberOfReviews: number;
-  isAvailable: boolean;
-}
