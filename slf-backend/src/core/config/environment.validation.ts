@@ -51,4 +51,11 @@ export const environmentValidationSchema = Joi.object({
   RESEND_API_KEY:      Joi.string().required(),
   MAIL_FROM:           Joi.string().email().default('no-reply@slforce.app'),
   RESET_PASSWORD_URL:  Joi.string().default('slforce://reset-password'),
+
+  // ─── Cloudinary (stockage des photos de profil + attachments chat) ────────
+  // Requis car les photos de profil sont stockées sur leur CDN (le filesystem
+  // local est éphémère sur Render/Fly et perd les fichiers au redéploiement).
+  CLOUDINARY_CLOUD_NAME: Joi.string().required(),
+  CLOUDINARY_API_KEY:    Joi.string().required(),
+  CLOUDINARY_API_SECRET: Joi.string().required(),
 });

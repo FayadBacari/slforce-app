@@ -1,9 +1,27 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 
-// Thin wrapper around the Resend SDK.
-// Keeps every email template in one place — easy to maintain and test.
+// ─── EmailService ──────────────────────────────────────────────────────────────
+//
+// Wrapper fin autour du SDK Resend.
+// Garde tous les envois transactionnels au même endroit — facile à étendre,
+// facile à mocker. Les templates HTML sont externalisés dans `templates/` et
+// chargés une seule fois au boot pour éviter les lectures disque répétées.
+//
+// Architecture des templates :
+//   • Fichiers HTML dans `core/email/templates/*.html` avec placeholders {{var}}
+//   • Copiés vers `dist/` par nest-cli.json (assets config)
+//   • Cachés en mémoire au démarrage du service (rapide + atomique)
+
+interface PasswordResetTemplateVariables {
+  firstName:   string;
+  resetUrl:    string;
+  currentYear: string;
+}
+
 @Injectable()
 export class EmailService {
   private readonly resend:   Resend;
@@ -11,18 +29,23 @@ export class EmailService {
   private readonly isDev:    boolean;
   private readonly logger = new Logger(EmailService.name);
 
+  // Templates chargés une seule fois au boot — lecture disque coûteuse en hot path.
+  private readonly passwordResetTemplate: string;
+
   constructor(private readonly configService: ConfigService) {
-    const apiKey   = this.configService.getOrThrow<string>('email.resendApiKey');
-    this.mailFrom  = this.configService.getOrThrow<string>('email.mailFrom');
-    this.resend    = new Resend(apiKey);
-    this.isDev     = this.configService.get<string>('NODE_ENV') !== 'production';
+    const apiKey  = this.configService.getOrThrow<string>('email.resendApiKey');
+    this.mailFrom = this.configService.getOrThrow<string>('email.mailFrom');
+    this.resend   = new Resend(apiKey);
+    this.isDev    = this.configService.get<string>('NODE_ENV') !== 'production';
+
+    this.passwordResetTemplate = this.loadTemplateFromDisk('reset-password.html');
   }
 
-  // Sends the "reset your password" email with a one-click link.
-  // In development, if Resend rejects the send (e.g. onboarding@resend.dev can
-  // only deliver to the Resend account owner's email), the reset URL is printed
-  // directly to the terminal so you can still test the full reset flow without
-  // needing a working mail server.
+  // ─── sendPasswordResetEmail ──────────────────────────────────────────────────
+  //
+  // En dev, si Resend rejette l'envoi (onboarding@resend.dev ne peut envoyer
+  // qu'à l'email du compte Resend), l'URL de reset est imprimée dans le terminal
+  // pour pouvoir tester le flow complet sans serveur mail fonctionnel.
   async sendPasswordResetEmail(params: {
     to:        string;
     firstName: string;
@@ -30,29 +53,32 @@ export class EmailService {
   }): Promise<void> {
     const { to, firstName, resetUrl } = params;
 
+    const html = this.renderPasswordResetTemplate({
+      firstName,
+      resetUrl,
+      currentYear: String(new Date().getFullYear()),
+    });
+
     const { error } = await this.resend.emails.send({
       from:    this.mailFrom,
       to,
       subject: 'Réinitialise ton mot de passe SLForce',
-      html:    this.buildResetEmailHtml(firstName, resetUrl),
+      html,
     });
 
     if (error) {
-      // Log the full Resend error so we can diagnose (status code + message)
       this.logger.error(
         `Resend delivery failed → ${error.name}: ${error.message}`,
       );
 
-      // ── DEV FALLBACK ────────────────────────────────────────────────────────
-      // Resend's onboarding@resend.dev sender can only deliver to the account
-      // owner's email. In dev we print the URL to the terminal so you can test
-      // the reset flow without a verified domain.
+      // ── DEV FALLBACK ───────────────────────────────────────────────────────
+      // En dev on imprime l'URL pour pouvoir continuer à tester.
       if (this.isDev) {
         this.logger.warn(
           `[DEV] Impossible d'envoyer l'email à ${to}. ` +
           `Utilise ce lien directement pour tester :\n\n  ${resetUrl}\n`,
         );
-        return; // don't throw — treat as success in dev
+        return; // ne throw pas — traité comme succès en dev
       }
 
       throw new Error(`Email delivery failed: ${error.message}`);
@@ -61,89 +87,41 @@ export class EmailService {
     this.logger.log(`Password reset email sent to ${to}`);
   }
 
-  // ─── Templates ────────────────────────────────────────────────────────────
+  // ─── Template helpers ────────────────────────────────────────────────────────
 
-  private buildResetEmailHtml(firstName: string, resetUrl: string): string {
-    return `
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Réinitialisation du mot de passe</title>
-</head>
-<body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 0;">
-    <tr>
-      <td align="center">
-        <table width="480" cellpadding="0" cellspacing="0"
-               style="background:#ffffff;border-radius:12px;padding:40px;box-shadow:0 2px 8px rgba(0,0,0,.08);">
+  // Charge un fichier template depuis le dossier `templates/`.
+  // Fonctionne aussi bien en dev (ts-node, lit depuis src/) qu'en prod
+  // (lit depuis dist/) grâce à `__dirname` qui suit la position du fichier compilé.
+  private loadTemplateFromDisk(templateFileName: string): string {
+    const templatePath = join(__dirname, 'templates', templateFileName);
+    try {
+      return readFileSync(templatePath, 'utf-8');
+    } catch (loadError) {
+      // Si le template manque, c'est une erreur de configuration grave.
+      // On throw au boot pour échouer vite plutôt que silencieusement à l'envoi.
+      this.logger.error(`Template introuvable : ${templatePath}`, loadError);
+      throw new Error(`Email template "${templateFileName}" not found at ${templatePath}`);
+    }
+  }
 
-          <!-- Logo / titre -->
-          <tr>
-            <td align="center" style="padding-bottom:24px;">
-              <span style="font-size:28px;font-weight:800;color:#111827;letter-spacing:-0.5px;">
-                SL<span style="color:#f97316;">Force</span>
-              </span>
-            </td>
-          </tr>
+  // Substitue les placeholders {{variable}} par les valeurs fournies.
+  // Volontairement simple — tant qu'on a un seul template on évite la dépendance
+  // à Handlebars / Mustache. Si on en ajoute 3 ou plus, basculer vers Handlebars.
+  private renderPasswordResetTemplate(variables: PasswordResetTemplateVariables): string {
+    return this.passwordResetTemplate
+      .replace(/\{\{firstName\}\}/g,   this.escapeHtml(variables.firstName))
+      .replace(/\{\{resetUrl\}\}/g,    variables.resetUrl)            // URL — déjà sûre, pas d'échappement HTML
+      .replace(/\{\{currentYear\}\}/g, variables.currentYear);
+  }
 
-          <!-- Titre -->
-          <tr>
-            <td style="padding-bottom:12px;">
-              <h1 style="margin:0;font-size:22px;font-weight:700;color:#111827;">
-                Réinitialisation du mot de passe
-              </h1>
-            </td>
-          </tr>
-
-          <!-- Corps -->
-          <tr>
-            <td style="padding-bottom:28px;font-size:15px;line-height:1.6;color:#4b5563;">
-              <p style="margin:0 0 12px;">Bonjour ${firstName},</p>
-              <p style="margin:0 0 12px;">
-                Tu as demandé à réinitialiser ton mot de passe SLForce.
-                Clique sur le bouton ci-dessous pour en choisir un nouveau.
-              </p>
-              <p style="margin:0;color:#9ca3af;font-size:13px;">
-                Ce lien est valable <strong>30 minutes</strong>.
-                Si tu n'as pas fait cette demande, ignore cet email.
-              </p>
-            </td>
-          </tr>
-
-          <!-- Bouton CTA -->
-          <tr>
-            <td align="center" style="padding-bottom:28px;">
-              <a href="${resetUrl}"
-                 style="display:inline-block;padding:14px 32px;background:#f97316;
-                        color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;
-                        border-radius:8px;letter-spacing:0.2px;">
-                Réinitialiser mon mot de passe
-              </a>
-            </td>
-          </tr>
-
-          <!-- Lien texte de secours -->
-          <tr>
-            <td style="padding-bottom:24px;font-size:12px;color:#9ca3af;word-break:break-all;">
-              Lien alternatif si le bouton ne fonctionne pas :<br/>
-              <a href="${resetUrl}" style="color:#f97316;">${resetUrl}</a>
-            </td>
-          </tr>
-
-          <!-- Pied -->
-          <tr>
-            <td align="center" style="font-size:12px;color:#d1d5db;border-top:1px solid #f3f4f6;padding-top:20px;">
-              © ${new Date().getFullYear()} SLForce · Tous droits réservés
-            </td>
-          </tr>
-
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`;
+  // Échappement HTML basique pour les valeurs user-controlled (firstName).
+  // Empêche un prénom contenant `<script>` de casser la mise en page de l'email.
+  private escapeHtml(rawValue: string): string {
+    return rawValue
+      .replace(/&/g,  '&amp;')
+      .replace(/</g,  '&lt;')
+      .replace(/>/g,  '&gt;')
+      .replace(/"/g,  '&quot;')
+      .replace(/'/g,  '&#39;');
   }
 }

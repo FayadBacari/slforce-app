@@ -7,6 +7,11 @@
 /node_modules
 /build
 
+# Photos legacy — l'ancien stockage local n'est plus utilisé (migré vers Cloudinary).
+# Le dossier reste pour ne pas casser un éventuel script de migration mais son
+# contenu n'est plus écrit ni servi.
+/uploads
+
 # Logs
 logs
 *.log

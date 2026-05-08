@@ -1,98 +1,184 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# SLForce Backend
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+API NestJS pour la marketplace de coaching sportif **SLForce** (coachs ↔ athlètes).
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+> Stack : NestJS 11 · TypeScript strict · MongoDB Atlas · JWT (access/refresh) · Stripe Connect · Stream Chat · Resend · Cloudinary · Pino
 
-## Description
+---
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## 🚀 Démarrage rapide
 
-## Project setup
+### Prérequis
+
+- **Node.js 20+** (cf. `.nvmrc`)
+- Un cluster **MongoDB Atlas** (free tier suffit)
+- Comptes API : **Stripe**, **Stream Chat**, **Resend**, **Cloudinary**
+
+### Installation
 
 ```bash
-$ npm install
+# 1. Bonne version de Node
+nvm use
+
+# 2. Dépendances
+npm install
+
+# 3. Variables d'environnement
+cp .env.example .env
+#   → remplir toutes les valeurs marquées [REMPLACER]
+
+# 4. Lancer en dev (hot-reload)
+npm run start:dev
+
+# 5. Vérifier
+#   → http://localhost:5132/api/v1/health
+#   → http://localhost:5132/api/v1/docs   (Swagger UI, dev uniquement)
 ```
 
-## Compile and run the project
+L'application refuse de démarrer si une variable d'env requise manque ou est mal formatée (validation Joi au boot).
+
+---
+
+## 📂 Architecture
+
+```
+src/
+├── main.ts                       # Bootstrap : pipes, helmet, Swagger, raw body Stripe
+├── app.module.ts                 # Module racine : guards globaux, throttler, filtre, intercepteur
+├── core/                         # Infrastructure technique transverse
+│   ├── config/                   # registerAs() pour chaque scope (app, jwt, email, cloudinary…)
+│   ├── database/                 # MongooseModule.forRootAsync
+│   ├── email/                    # EmailService + templates HTML externalisés
+│   ├── cloudinary/               # CloudinaryService (upload + delete)
+│   ├── filters/                  # AllExceptionsFilter (format d'erreur unifié)
+│   └── interceptors/             # ResponseEnvelopeInterceptor ({ success, data })
+├── modules/                      # Logique métier — un dossier = un domaine
+│   ├── auth/                     # login/register/refresh/logout/forgot/reset
+│   ├── users/                    # profil, privacy, suppression compte (User schema vit ici)
+│   ├── chat/                     # Stream Chat token + sync identité
+│   ├── search/                   # search coachs / athlètes
+│   ├── payments/                 # Stripe Connect + paiements + webhook
+│   └── health/                   # liveness probe
+└── shared/                       # Décorateurs / guards / types réutilisables
+    ├── decorators/               # @Public, @CurrentUser, @RequireRoles
+    ├── guards/                   # JwtAuthGuard, RolesGuard
+    ├── types/                    # UserRole enum, AuthenticatedRequest
+    └── utils/                    # generate-avatar-url
+```
+
+Chaque module métier suit le même découpage en couches :
+
+```
+modules/<domain>/
+├── <domain>.module.ts
+├── presentation/                 # Couche HTTP (controllers + DTOs validés)
+│   ├── *.controller.ts
+│   └── dto/*.dto.ts
+├── services/                     # Logique métier (use cases)
+│   └── *.service.ts
+└── data/                         # Accès aux données
+    ├── repositories/*.repository.ts
+    └── schemas/*.schema.ts
+```
+
+### Flux d'une requête
+
+```
+Request
+  └─ Helmet + Compression + CORS                         (main.ts)
+      └─ ValidationPipe (whitelist + transform)          (main.ts)
+          └─ Global Guards : JwtAuthGuard → RolesGuard → ThrottlerGuard
+              └─ Controller (presentation/)
+                  └─ Service (services/)
+                      └─ Repository (data/repositories/)
+                          └─ Mongoose Model
+              ↑ ResponseEnvelopeInterceptor wraps in { success, data }
+              ↑ AllExceptionsFilter formats errors as { success: false, ... }
+```
+
+### Path aliases
+
+Tous les imports entre couches passent par `@core/*`, `@modules/*`, `@shared/*` (cf. `tsconfig.json`).
+Les imports relatifs `../` ne sont utilisés qu'**au sein du même sous-module** (ex: un service vers son repository).
+
+---
+
+## 🔐 Sécurité
+
+| Vecteur | Mesure |
+|---|---|
+| Vol d'access token | Durée 15 min — rotation refresh à chaque renouvellement |
+| Vol de refresh token | Stocké hashé SHA-256 + TTL Mongo + révocation au logout |
+| Brute-force login | Throttle dédié 5 req/min sur `/auth/*` (en plus du global 60/min) |
+| Énumération d'emails | Réponse identique sur login OK/KO et forgot-password OK/KO |
+| Reset password | Token 256 bits aléatoires, hashé SHA-256, TTL 30 min, révocation des sessions au reset |
+| Webhook Stripe forgé | Vérification HMAC obligatoire via `STRIPE_WEBHOOK_SECRET` |
+| Paiement forgé client | PaymentIntent re-récupéré côté serveur + match metadata.athleteId |
+| Doubles paiements | Index `unique:true sparse:true` sur `stripePaymentIntentId` |
+| Mot de passe en DB | bcrypt 12 rounds |
+| Headers HTTP | `helmet()` global |
+| Rate-limit global | `@nestjs/throttler` 60 req/min/IP |
+
+---
+
+## 📡 Webhooks Stripe (production)
+
+Pour activer le filet de sécurité asynchrone des paiements :
+
+1. Dans le [Stripe Dashboard](https://dashboard.stripe.com/test/webhooks), créer un endpoint pointant sur `https://<ton-domaine>/api/v1/payments/webhook`
+2. Cocher l'événement **`payment_intent.succeeded`** (et au besoin `payment_intent.payment_failed`)
+3. Copier le **signing secret** (`whsec_...`) dans `.env` → `STRIPE_WEBHOOK_SECRET`
+4. Redémarrer le backend
+
+En dev, utilise [Stripe CLI](https://stripe.com/docs/stripe-cli) :
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+stripe listen --forward-to localhost:5132/api/v1/payments/webhook
+# copier le whsec_xxx affiché → STRIPE_WEBHOOK_SECRET
 ```
 
-## Run tests
+---
 
-```bash
-# unit tests
-$ npm run test
+## 📧 Emails (Resend)
 
-# e2e tests
-$ npm run test:e2e
+En dev, l'adresse expéditeur `onboarding@resend.dev` ne peut envoyer qu'à **l'email du compte Resend**. Pour les autres adresses, le service log automatiquement le `resetUrl` dans le terminal :
 
-# test coverage
-$ npm run test:cov
+```
+WARN [EmailService] [DEV] Impossible d'envoyer l'email à test@example.com.
+                         Utilise ce lien directement pour tester :
+
+  slforce://reset-password?token=abc123…
 ```
 
-## Deployment
+En prod, configurer un domaine vérifié dans [Resend](https://resend.com/domains) et changer `MAIL_FROM`.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+---
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+## 🖼️ Upload de photos (Cloudinary)
 
-```bash
-$ npm install -g mau
-$ mau deploy
-```
+Les photos de profil sont uploadées **directement vers Cloudinary** depuis le buffer mémoire — aucun fichier n'est écrit sur le disque local (qui est éphémère sur Render/Fly).
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+- Dossier Cloudinary : `slforce/profile-photos/`
+- Transformation auto : crop 512×512 face-aware, qualité auto, format auto (webp/avif)
+- Limite taille : 5 MB
 
-## Resources
+---
 
-Check out a few resources that may come in handy when working with NestJS:
+## 📜 Scripts npm
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+| Commande | Description |
+|---|---|
+| `npm run start:dev` | Hot reload dev avec Pino prettifié |
+| `npm run build` | Compile vers `dist/` |
+| `npm run start:prod` | Lance la version compilée |
+| `npm run lint` | ESLint --fix sur `src/` |
+| `npm run format` | Prettier sur `src/` |
+| `npm test` | Jest |
 
-## Support
+---
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+## 📚 Documentation complémentaire
 
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- **API interactive** : `http://localhost:5132/api/v1/docs` (Swagger UI, dev uniquement)
+- **Architecture détaillée** : [`docs/architecture.md`](./docs/architecture.md)
+- **Plan de migration User → AthleteProfile / CoachProfile** : cf. docblock en tête de [`src/modules/users/data/schemas/user.schema.ts`](./src/modules/users/data/schemas/user.schema.ts)

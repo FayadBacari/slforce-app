@@ -1,6 +1,7 @@
 import { Controller, Get, Res } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { Public } from '../../../shared/decorators/public-route.decorator';
+import { Public } from '@shared/decorators/public-route.decorator';
 
 // ─── StripeRedirectController ─────────────────────────────────────────────────
 //
@@ -16,6 +17,7 @@ import { Public } from '../../../shared/decorators/public-route.decorator';
 //   GET /api/v1/payments/stripe/return  ← sent in `return_url`  (onboarding complete / left)
 //   GET /api/v1/payments/stripe/refresh ← sent in `refresh_url` (link expired)
 
+@ApiTags('Payments / Stripe Connect')
 @Controller('payments/stripe')
 export class StripeRedirectController {
   // Called by Stripe when the coach completes (or leaves) the onboarding.

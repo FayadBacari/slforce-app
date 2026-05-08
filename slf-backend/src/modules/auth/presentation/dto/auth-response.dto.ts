@@ -1,4 +1,4 @@
-import { UserRole } from '../../../../shared/types/user-role.enum';
+import { UserRole } from '@shared/types/user-role.enum';
 
 // The user info we send back to the client after a successful auth.
 // MUST match exactly the shape `LoggedInUser` expected by the frontend

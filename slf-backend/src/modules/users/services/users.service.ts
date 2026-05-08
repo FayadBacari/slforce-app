@@ -1,13 +1,12 @@
-import { Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Types } from 'mongoose';
-import { StreamChat } from 'stream-chat';
-import { ConfigService } from '@nestjs/config';
-import { UsersRepository } from '../../auth/data/repositories/users.repository';
-import { AuthTokensService } from '../../auth/services/auth-tokens.service';
+import { UsersRepository } from '../data/repositories/users.repository';
+import { AuthTokensService } from '@modules/auth/services/auth-tokens.service';
+import { ChatService } from '@modules/chat/services/chat.service';
 import { UpdateProfileRequestDto } from '../presentation/dto/update-profile.dto';
-import { UserRole } from '../../../shared/types/user-role.enum';
-import { formatUserForClient } from '../../../shared/utils/format-user-for-client.util';
-import type { AuthenticatedUserResponse } from '../../auth/presentation/dto/auth-response.dto';
+import { UserRole } from '@shared/types/user-role.enum';
+import { formatUserForClient } from '../utils/format-user-for-client.util';
+import type { AuthenticatedUserResponse } from '@modules/auth/presentation/dto/auth-response.dto';
 import type { PrivacySettingsResponseDto } from '../presentation/dto/privacy-settings.dto';
 
 export interface PlatformStatsResponse {
@@ -15,35 +14,19 @@ export interface PlatformStatsResponse {
   athleteCount: number;
 }
 
-// Named alias for the exact element type that upsertUsers() expects.
-// Stream's SDK types only declare standard fields — custom fields such as
-// `showOnlineStatus` are valid at runtime but require an `as unknown` cast
-// to silence TypeScript. The alias removes the verbose inline Parameters<...>.
-type StreamUserInput = Parameters<InstanceType<typeof StreamChat>['upsertUsers']>[0][0];
-
 @Injectable()
-export class UsersService implements OnModuleInit {
+export class UsersService {
   private readonly logger = new Logger(UsersService.name);
 
-  // Server-side Stream client — used to sync the showOnlineStatus flag to Stream
-  // so that other mobile clients can read it from channel members immediately.
-  private streamServerClient!: StreamChat;
-
   constructor(
-    private readonly usersRepository: UsersRepository,
+    private readonly usersRepository:   UsersRepository,
     private readonly authTokensService: AuthTokensService,
-    private readonly configService:   ConfigService,
+    // ChatService centralise désormais TOUS les appels au SDK Stream serveur.
+    // UsersService ne crée plus son propre client (cf. correction "Stream client mutualisé").
+    private readonly chatService:       ChatService,
   ) {}
 
-  onModuleInit(): void {
-    // Stream API keys are validated at startup by the Joi schema.
-    const apiKey    = this.configService.getOrThrow<string>('STREAM_API_KEY');
-    const apiSecret = this.configService.getOrThrow<string>('STREAM_API_SECRET');
-    // getInstance() returns the shared singleton — same instance as ChatService.
-    this.streamServerClient = StreamChat.getInstance(apiKey, apiSecret);
-  }
-
-  // GET /users/profile — returns the current user's profile
+  // GET /users/profile — renvoie le profil de l'utilisateur courant
   async getCurrentUserProfile(currentUserId: string): Promise<AuthenticatedUserResponse> {
     const userInDatabase = await this.usersRepository.findOneById(currentUserId);
     if (!userInDatabase) {
@@ -52,7 +35,7 @@ export class UsersService implements OnModuleInit {
     return formatUserForClient(userInDatabase);
   }
 
-  // PUT /users/profile — updates allowed fields and returns the new profile
+  // PUT /users/profile — met à jour les champs autorisés et renvoie le profil mis à jour
   async updateCurrentUserProfile(
     currentUserId: string,
     fieldsToUpdate: UpdateProfileRequestDto,
@@ -64,7 +47,7 @@ export class UsersService implements OnModuleInit {
     return formatUserForClient(updatedUser);
   }
 
-  // GET /users/stats — returns platform-wide counts (public endpoint, no auth)
+  // GET /users/stats — public, renvoie les compteurs plateforme
   async getPlatformStats(): Promise<PlatformStatsResponse> {
     const [coachCount, athleteCount] = await Promise.all([
       this.usersRepository.countByRole(UserRole.Coach),
@@ -75,34 +58,35 @@ export class UsersService implements OnModuleInit {
 
   // ─── DELETE /users/account ─────────────────────────────────────────────────
   //
-  // Soft-delete flow (Option B):
-  //   1. Revoke every refresh token → no new access token can ever be issued
-  //   2. Anonymise the MongoDB document (PII wiped, isActive=false, deletedAt set)
-  //   3. Best-effort: update the Stream user so ghost avatar disappears in chats
+  // Soft-delete (Option B) :
+  //   1. Révoquer toutes les refresh tokens → plus aucun access token issuable
+  //   2. Anonymiser le document MongoDB (PII wipe, isActive=false, deletedAt set)
+  //   3. Best-effort : marquer l'identité Stream comme "Compte Supprimé"
   //
-  // The document is intentionally kept in MongoDB so Stripe payment history and
-  // any future audit/legal requests remain traceable.
+  // Le document reste en MongoDB pour l'historique Stripe et les éventuelles
+  // demandes audit/légales — seul le contenu personnel est anonymisé.
   async deleteAccount(userId: string): Promise<void> {
     const user = await this.usersRepository.findOneById(userId);
     if (!user) throw new NotFoundException('Utilisateur introuvable.');
 
-    // 1. Revoke all refresh tokens — existing access tokens expire naturally (7d)
-    //    but can no longer be renewed, so the account is effectively locked out.
+    // 1. Révoque toutes les refresh tokens — les access tokens existants
+    //    expirent naturellement (15min) mais ne peuvent plus être renouvelés,
+    //    donc le compte est verrouillé immédiatement après expiration.
     await this.authTokensService.revokeAllRefreshTokensForUser(
       user._id as Types.ObjectId,
     );
 
-    // 2. Anonymise + soft-delete the MongoDB document
+    // 2. Anonymise + soft-delete le document MongoDB
     await this.usersRepository.softDeleteAccount(userId);
 
-    // 3. Best-effort: overwrite the Stream user with a neutral identity so
-    //    ongoing conversations show "Compte Supprimé" instead of the real name/photo.
+    // 3. Best-effort : update l'identité Stream pour que les conversations
+    //    en cours affichent "Compte Supprimé" au lieu du vrai nom.
+    //    Une erreur Stream ne doit JAMAIS bloquer la suppression — la source
+    //    de vérité est MongoDB, déjà committée à l'étape 2.
     try {
-      await this.streamServerClient.upsertUsers([
-        { id: userId, name: 'Compte Supprimé' } as unknown as StreamUserInput,
-      ]);
-    } catch {
-      // Non-fatal — chat will update on the next cache refresh
+      await this.chatService.markUserAsDeletedInStream(userId);
+    } catch (chatError) {
+      this.logger.warn('Sync Stream "deleted" non-fatal', chatError);
     }
   }
 
@@ -118,14 +102,13 @@ export class UsersService implements OnModuleInit {
 
   // ─── PATCH /users/privacy ──────────────────────────────────────────────────
   //
-  // Saves the privacy flags to MongoDB, then syncs `showOnlineStatus` to the
-  // Stream user object via the server-side admin client.
+  // Sauvegarde les flags privacy en MongoDB, puis sync `showOnlineStatus` vers
+  // l'objet user Stream via ChatService (pas de client Stream dupliqué ici).
   //
-  // Why sync to Stream?
-  //   The chat screen reads `channel.state.members[userId].user?.showOnlineStatus`
-  //   to decide whether to show the real presence or display "Désactivé". Since
-  //   Stream delivers this field to every connected client automatically, no extra
-  //   API call is needed on the receiving end.
+  // Pourquoi sync vers Stream ?
+  //   L'écran chat lit `channel.state.members[userId].user?.showOnlineStatus`
+  //   pour décider d'afficher la vraie présence ou "Désactivé". Stream propage
+  //   ce champ à tous les clients connectés sans round-trip API supplémentaire.
   async updatePrivacySettings(
     userId:   string,
     settings: { isProfilePublic?: boolean; showOnlineStatus?: boolean },
@@ -135,21 +118,17 @@ export class UsersService implements OnModuleInit {
 
     await this.usersRepository.updatePrivacySettings(userId, settings);
 
-    // Sync showOnlineStatus to Stream so the change is visible to other users
-    // in existing chat sessions without them needing to reconnect.
-    //
-    // This is best-effort: a Stream API failure (network, cold-start, etc.) must
-    // NOT propagate up and fail the HTTP response — the MongoDB update already
-    // committed above is the source of truth. We log the error and move on.
+    // Sync vers Stream uniquement si showOnlineStatus a changé.
+    // Best-effort : un fail Stream NE DOIT PAS faire échouer la réponse HTTP.
+    // MongoDB est la source de vérité, l'update s'est déjà committé au-dessus.
     if (settings.showOnlineStatus !== undefined) {
       try {
-        await this.streamServerClient.upsertUsers([
-          { id: userId, showOnlineStatus: settings.showOnlineStatus } as unknown as StreamUserInput,
-        ]);
-      } catch (streamError) {
-        // Non-fatal — privacy flag is saved in MongoDB; Stream will reflect it
-        // the next time the user is fetched by the chat service.
-        this.logger.error('Stream upsertUsers failed (non-fatal):', streamError);
+        await this.chatService.updateUserPresenceVisibilityInStream(
+          userId,
+          settings.showOnlineStatus,
+        );
+      } catch (chatError) {
+        this.logger.warn('Sync Stream "showOnlineStatus" non-fatal', chatError);
       }
     }
 
@@ -158,5 +137,4 @@ export class UsersService implements OnModuleInit {
       showOnlineStatus: settings.showOnlineStatus ?? (user.showOnlineStatus ?? true),
     };
   }
-
 }

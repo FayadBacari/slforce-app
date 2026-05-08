@@ -4,9 +4,9 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import {
   AuthenticatedUserPayload,
-} from '../../../shared/types/authenticated-request.interface';
+} from '@shared/types/authenticated-request.interface';
 import { JwtTokenPayload } from './auth-tokens.service';
-import { UsersRepository } from '../data/repositories/users.repository';
+import { UsersRepository } from '@modules/users/data/repositories/users.repository';
 
 // Extracts the Bearer token from the Authorization header,
 // verifies its signature with the access secret, and attaches a clean

@@ -2,12 +2,13 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { PaymentsRepository } from '../data/repositories/payments.repository';
-import { StripeConnectService } from './stripe-connect.service';
-import { UsersRepository } from '../../auth/data/repositories/users.repository';
+import { StripeConnectService, type StripeWebhookEvent } from './stripe-connect.service';
+import { UsersRepository } from '@modules/users/data/repositories/users.repository';
 import type {
   SentPaymentDto,
   ReceivedPaymentDto,
@@ -33,6 +34,8 @@ const FRENCH_MONTH_LABELS = [
 
 @Injectable()
 export class PaymentsService {
+  private readonly logger = new Logger(PaymentsService.name);
+
   constructor(
     private readonly paymentsRepository:   PaymentsRepository,
     private readonly stripeConnectService: StripeConnectService,
@@ -251,49 +254,110 @@ export class PaymentsService {
 
   // ─── POST /payments/confirm (athlete) ──────────────────────────────────────
   //
-  // Called by the mobile app after `presentPaymentSheet()` resolves without error.
+  // Appelé par le mobile après `presentPaymentSheet()` résolu sans erreur.
   //
-  // Security model:
-  //   • We retrieve the PaymentIntent directly from Stripe — the frontend cannot
-  //     forge a "succeeded" status.
-  //   • We verify that `metadata.athleteId` matches the authenticated caller —
-  //     prevents one athlete from confirming another athlete's payment.
-  //   • The stripePaymentIntentId unique-sparse index makes this call idempotent —
-  //     retrying after a network blip never creates duplicate records.
+  // Modèle de sécurité :
+  //   • Le PaymentIntent est récupéré directement depuis Stripe — le client ne
+  //     peut pas forger un statut "succeeded".
+  //   • On vérifie que `metadata.athleteId` correspond au caller authentifié —
+  //     un athlète ne peut pas confirmer le paiement d'un autre.
+  //   • L'index unique-sparse sur stripePaymentIntentId rend l'opération
+  //     idempotente — retenter après un network blip ne crée pas de doublon.
+  //
+  // Cette route reste utile MÊME avec le webhook : c'est le chemin "happy path"
+  // qui confirme le paiement instantanément côté UI mobile, sans attendre
+  // l'événement async de Stripe.
   async confirmPayment(params: {
     athleteId:       string;
     paymentIntentId: string;
   }): Promise<void> {
-    // 1. Retrieve the live PaymentIntent from Stripe
+    // 1. Retrieve the live PaymentIntent from Stripe (source of truth)
     const paymentIntent =
       await this.stripeConnectService.retrievePaymentIntent(params.paymentIntentId);
 
-    // 2. Gate: only accept succeeded intents
+    // 2. Gate : seul un intent "succeeded" est acceptable
     if (paymentIntent.status !== 'succeeded') {
       throw new BadRequestException(
         'Le paiement n\'a pas encore été confirmé par Stripe. Réessayez dans quelques secondes.',
       );
     }
 
-    // 3. Gate: caller must be the athlete who initiated the intent
+    // 3. Gate : le caller doit être l'athlète qui a initié l'intent
     if (paymentIntent.metadata?.athleteId !== params.athleteId) {
       throw new ForbiddenException('Ce paiement ne vous appartient pas.');
     }
 
-    // 4. Idempotency check — skip silently if already recorded
+    // 4. Persistance idempotente (logique partagée avec le webhook)
+    await this.persistSucceededPaymentIfNew(paymentIntent);
+  }
+
+  // ─── POST /payments/webhook (Stripe → backend) ─────────────────────────────
+  //
+  // Sert de filet de sécurité quand le mobile crashe entre presentPaymentSheet()
+  // et POST /payments/confirm — sans webhook, le coach aurait l'argent mais
+  // l'app ne verrait jamais le paiement en DB.
+  //
+  // Le controller a déjà vérifié la signature ; ici on ne fait que dispatcher
+  // l'événement vers le bon handler. Le retour 200 est crucial pour que Stripe
+  // n'enchaîne pas les retries en cascade.
+  async handleStripeWebhookEvent(event: StripeWebhookEvent): Promise<void> {
+    this.logger.log(`Stripe webhook reçu : ${event.type} (${event.id})`);
+
+    switch (event.type) {
+      case 'payment_intent.succeeded': {
+        // event.data.object est typé `Stripe.PaymentIntent` — même shape que
+        // la valeur retournée par paymentIntents.retrieve(), donc le helper
+        // de persistance ci-dessous fonctionne tel quel.
+        const paymentIntent = event.data.object as Parameters<
+          typeof this.persistSucceededPaymentIfNew
+        >[0];
+        await this.persistSucceededPaymentIfNew(paymentIntent);
+        return;
+      }
+
+      // Les autres event types sont reçus mais ignorés volontairement —
+      // les ajouter ici à mesure des besoins (refund, dispute, etc.).
+      default:
+        this.logger.debug(`Webhook event type ignoré : ${event.type}`);
+        return;
+    }
+  }
+
+  // ─── Helper privé — persistance idempotente d'un paiement réussi ───────────
+  //
+  // Source unique de vérité pour transformer un PaymentIntent Stripe en
+  // document Payment en DB. Appelée à la fois par /payments/confirm (chemin
+  // synchrone côté client) et par le webhook (filet de sécurité asynchrone).
+  //
+  // L'idempotence repose sur l'index unique-sparse `stripePaymentIntentId` :
+  // si le paiement est déjà en DB, on retourne silencieusement.
+  private async persistSucceededPaymentIfNew(paymentIntent: {
+    id:        string;
+    amount:    number;
+    metadata?: { athleteId?: string; coachId?: string; description?: string };
+  }): Promise<void> {
+    // Garde-fou : metadata.athleteId/coachId sont écrits par
+    // createPaymentIntentForCoach — toujours présents en théorie.
+    if (!paymentIntent.metadata?.athleteId || !paymentIntent.metadata?.coachId) {
+      this.logger.warn(
+        `PaymentIntent ${paymentIntent.id} sans metadata athleteId/coachId — skip.`,
+      );
+      return;
+    }
+
+    // Idempotence — skip silencieux si déjà enregistré.
     const existing = await this.paymentsRepository.findByStripePaymentIntentId(
-      params.paymentIntentId,
+      paymentIntent.id,
     );
     if (existing) return;
 
-    // 5. Persist the confirmed payment in our database
     await this.paymentsRepository.createPaymentRecord({
       senderId:              new Types.ObjectId(paymentIntent.metadata.athleteId),
       receiverId:            new Types.ObjectId(paymentIntent.metadata.coachId),
       amountInCents:         paymentIntent.amount,
       status:                'completed',
-      description:           paymentIntent.metadata?.description || undefined,
-      stripePaymentIntentId: params.paymentIntentId,
+      description:           paymentIntent.metadata.description || undefined,
+      stripePaymentIntentId: paymentIntent.id,
     });
   }
 }

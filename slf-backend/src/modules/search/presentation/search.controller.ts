@@ -1,8 +1,11 @@
 import { Controller, Get } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { SearchService } from '../services/search.service';
 import { CoachSearchResultDto } from './dto/coach-search-result.dto';
 import { AthleteSearchResultDto } from './dto/athlete-search-result.dto';
 
+@ApiTags('Search')
+@ApiBearerAuth('access-token')
 @Controller('search')
 export class SearchController {
   constructor(private readonly searchService: SearchService) {}

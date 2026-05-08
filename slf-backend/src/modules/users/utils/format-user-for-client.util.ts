@@ -1,7 +1,7 @@
 import { Types } from 'mongoose';
-import { UserDocument } from '../../modules/auth/data/schemas/user.schema';
-import { AuthenticatedUserResponse } from '../../modules/auth/presentation/dto/auth-response.dto';
-import { generateDefaultAvatarUrl } from './generate-avatar-url.util';
+import { UserDocument } from '../data/schemas/user.schema';
+import { AuthenticatedUserResponse } from '@modules/auth/presentation/dto/auth-response.dto';
+import { generateDefaultAvatarUrl } from '@shared/utils/generate-avatar-url.util';
 
 // ─── formatUserForClient ───────────────────────────────────────────────────────
 //

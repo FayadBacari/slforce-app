@@ -8,16 +8,16 @@ import {
 import { randomBytes, createHash } from 'crypto';
 import { Types } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
-import { UsersRepository } from '../data/repositories/users.repository';
+import { UsersRepository } from '@modules/users/data/repositories/users.repository';
 import { PasswordHashService } from './password-hash.service';
 import { AuthTokensService } from './auth-tokens.service';
 import { PasswordResetRepository } from '../data/repositories/password-reset.repository';
-import { EmailService } from '../../../core/email/email.service';
+import { EmailService } from '@core/email/email.service';
 import { RegisterRequestDto } from '../presentation/dto/register.dto';
 import { LoginRequestDto } from '../presentation/dto/login.dto';
 import { AuthenticationSuccessResponse } from '../presentation/dto/auth-response.dto';
-import { formatUserForClient } from '../../../shared/utils/format-user-for-client.util';
-import { generateDefaultAvatarUrl } from '../../../shared/utils/generate-avatar-url.util';
+import { formatUserForClient } from '@modules/users/utils/format-user-for-client.util';
+import { generateDefaultAvatarUrl } from '@shared/utils/generate-avatar-url.util';
 
 // The auth flow's "use case" layer.
 // Coordinates the repositories and the technical services to fulfil the

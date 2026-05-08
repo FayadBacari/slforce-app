@@ -2,7 +2,26 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { User, UserDocument } from '../schemas/user.schema';
-import { UserRole } from '../../../../shared/types/user-role.enum';
+import { UserRole } from '@shared/types/user-role.enum';
+
+// ─── UpdatableUserFields ───────────────────────────────────────────────────────
+//
+// Whitelist EXPLICITE des champs qu'un caller a le droit de modifier via
+// updateProfileFields(). Tout champ absent ici (email, password, role, isActive,
+// stripeAccountId, deletedAt…) est mécaniquement protégé contre une modification
+// accidentelle, même si le caller passe un Partial<User> mal nettoyé.
+//
+// La couche DTO (UpdateProfileRequestDto) protège déjà côté HTTP, mais cette
+// whitelist agit comme deuxième barrière au niveau du repository — défense en profondeur.
+export type UpdatableUserFields = Partial<Pick<User,
+  // ── Identité ─────────────────────────────────────────────────────────────────
+  | 'displayName' | 'firstName' | 'lastName' | 'phoneNumber' | 'profilePhotoUrl'
+  // ── Profil coach ────────────────────────────────────────────────────────────
+  | 'speciality' | 'bio' | 'location' | 'monthlyRate' | 'experienceYears' | 'disciplines'
+  // ── Profil athlète ──────────────────────────────────────────────────────────
+  | 'gender' | 'weightCategory' | 'weightKg' | 'heightCm'
+  | 'recordMuscleUp' | 'recordTraction' | 'recordDips' | 'recordSquat'
+>>;
 
 // Encapsulates ALL Mongoose queries on the User collection.
 // Service layer NEVER touches Mongoose directly — this keeps things testable
@@ -91,14 +110,12 @@ export class UsersRepository {
     ).exec();
   }
 
+  // Met à jour un sous-ensemble de champs profil sur le document utilisateur.
+  // Le type UpdatableUserFields garantit qu'aucun champ sensible (email, password,
+  // role, isActive, stripeAccountId…) ne peut être passé ici, même par accident.
   async updateProfileFields(
     userId: string,
-    fieldsToUpdate: Partial<Pick<User,
-      'displayName' | 'firstName' | 'lastName' | 'phoneNumber' | 'profilePhotoUrl' |
-      'speciality' | 'bio' | 'location' | 'monthlyRate' | 'experienceYears' | 'disciplines' |
-      'gender' | 'weightCategory' | 'weightKg' | 'heightCm' |
-      'recordMuscleUp' | 'recordTraction' | 'recordDips' | 'recordSquat'
-    >>,
+    fieldsToUpdate: UpdatableUserFields,
   ): Promise<UserDocument | null> {
     if (!Types.ObjectId.isValid(userId)) return null;
     return this.userModel

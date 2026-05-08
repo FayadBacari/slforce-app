@@ -1,4 +1,4 @@
-import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
 
@@ -16,9 +16,11 @@ export interface StripeAccountStatus {
 type StripeInstance = InstanceType<typeof Stripe>;
 
 // Derived from the SDK so the type is always correct regardless of Stripe version.
-// Using Stripe.PaymentIntent directly triggers TS2694 on stripe@22 because the CJS
-// `export = Stripe` pattern makes the namespace unavailable through the default import.
+// Using Stripe.PaymentIntent / Stripe.Event directly triggers TS2694 on stripe@22
+// because the CJS `export = Stripe` pattern makes the namespace unavailable through
+// the default import — these aliases reconstruct the same types via ReturnType.
 type StripePaymentIntent = Awaited<ReturnType<StripeInstance['paymentIntents']['retrieve']>>;
+export type StripeWebhookEvent = ReturnType<StripeInstance['webhooks']['constructEvent']>;
 
 @Injectable()
 export class StripeConnectService {
@@ -29,6 +31,10 @@ export class StripeConnectService {
   // (Stripe only accepts HTTP/HTTPS — custom schemes are rejected as "Not a valid URL").
   private readonly stripeReturnUrl:  string;
   private readonly stripeRefreshUrl: string;
+
+  // Webhook signing secret — null en dev tant que pas de webhook configuré.
+  // En prod, Joi rend STRIPE_WEBHOOK_SECRET obligatoire (cf. environment.validation.ts).
+  private readonly stripeWebhookSecret: string | null;
 
   constructor(private readonly configService: ConfigService) {
     const secretKey = this.configService.getOrThrow<string>('STRIPE_SECRET_KEY');
@@ -41,6 +47,10 @@ export class StripeConnectService {
 
     this.stripeReturnUrl  = `${appUrl}/${apiPrefix}/payments/stripe/return`;
     this.stripeRefreshUrl = `${appUrl}/${apiPrefix}/payments/stripe/refresh`;
+
+    // En dev sans webhook configuré, la valeur peut être absente. La vérif réelle
+    // a lieu dans `constructWebhookEvent()` au moment du premier event reçu.
+    this.stripeWebhookSecret = this.configService.get<string>('STRIPE_WEBHOOK_SECRET') ?? null;
   }
 
   // ─── Create or resume the onboarding flow ──────────────────────────────────
@@ -170,6 +180,42 @@ export class StripeConnectService {
   // before recording the payment in our database.
   async retrievePaymentIntent(paymentIntentId: string): Promise<StripePaymentIntent> {
     return this.stripe.paymentIntents.retrieve(paymentIntentId);
+  }
+
+  // ─── Webhook signature verification ──────────────────────────────────────
+  //
+  // Vérifie qu'un payload reçu sur l'endpoint webhook a bien été émis par Stripe
+  // (et pas forgé par un attaquant qui aurait deviné l'URL).
+  //
+  // L'API Stripe utilise un HMAC-SHA256 calculé sur le body brut (raw bytes) :
+  //   • Le moindre re-encodage du body invalide la signature → on doit lire
+  //     `req.rawBody` (cf. main.ts `rawBody: true`) plutôt que `req.body`.
+  //   • Une signature absente ou invalide throw immédiatement — Stripe retentera
+  //     l'envoi avec backoff jusqu'à 3 jours.
+  //
+  // En dev sans webhook configuré, la méthode lève une UnauthorizedException
+  // explicite plutôt qu'un crash opaque.
+  constructWebhookEvent(rawPayload: Buffer, signatureHeader: string): StripeWebhookEvent {
+    if (!this.stripeWebhookSecret) {
+      throw new UnauthorizedException(
+        'STRIPE_WEBHOOK_SECRET non configuré — webhook impossible à vérifier.',
+      );
+    }
+    if (!signatureHeader) {
+      throw new UnauthorizedException('Header `stripe-signature` manquant.');
+    }
+    try {
+      return this.stripe.webhooks.constructEvent(
+        rawPayload,
+        signatureHeader,
+        this.stripeWebhookSecret,
+      );
+    } catch (verificationError) {
+      const message = verificationError instanceof Error
+        ? verificationError.message
+        : 'Stripe webhook signature verification failed';
+      throw new UnauthorizedException(`Stripe webhook signature invalide : ${message}`);
+    }
   }
 
   // ─── Disconnect / delete the Express account ─────────────────────────────

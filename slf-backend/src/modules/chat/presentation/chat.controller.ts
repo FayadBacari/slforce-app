@@ -1,8 +1,11 @@
 import { Controller, Get } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ChatService } from '../services/chat.service';
-import { CurrentUser } from '../../../shared/decorators/current-user.decorator';
-import { AuthenticatedUserPayload } from '../../../shared/types/authenticated-request.interface';
+import { CurrentUser } from '@shared/decorators/current-user.decorator';
+import { AuthenticatedUserPayload } from '@shared/types/authenticated-request.interface';
 
+@ApiTags('Chat')
+@ApiBearerAuth('access-token')
 @Controller('chat')
 export class ChatController {
   constructor(private readonly chatService: ChatService) {}

@@ -1,9 +1,10 @@
 import { Controller, Get, Post, Delete, Body } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { PaymentsService } from '../services/payments.service';
-import { CurrentUser } from '../../../shared/decorators/current-user.decorator';
-import { RequireRoles } from '../../../shared/decorators/require-roles.decorator';
-import { UserRole } from '../../../shared/types/user-role.enum';
-import type { AuthenticatedUserPayload } from '../../../shared/types/authenticated-request.interface';
+import { CurrentUser } from '@shared/decorators/current-user.decorator';
+import { RequireRoles } from '@shared/decorators/require-roles.decorator';
+import { UserRole } from '@shared/types/user-role.enum';
+import type { AuthenticatedUserPayload } from '@shared/types/authenticated-request.interface';
 import type {
   PaymentHistoryResponseDto,
   CoachPaymentsResponseDto,
@@ -17,6 +18,8 @@ import type {
 import { InitiatePaymentBodyDto, ConfirmPaymentBodyDto } from './dto/payment-intent.dto';
 import type { PaymentIntentResponseDto } from './dto/payment-intent.dto';
 
+@ApiTags('Payments')
+@ApiBearerAuth('access-token')
 @Controller('payments')
 export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}

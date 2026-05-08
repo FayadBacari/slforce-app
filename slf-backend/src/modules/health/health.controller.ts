@@ -1,8 +1,10 @@
 import { Controller, Get } from '@nestjs/common';
-import { Public } from '../../shared/decorators/public-route.decorator';
+import { ApiTags } from '@nestjs/swagger';
+import { Public } from '@shared/decorators/public-route.decorator';
 
 // Lightweight liveness endpoint. No DB call, no auth.
 // Used by deployment platforms (Render, Fly, K8s) to know when the app is up.
+@ApiTags('Health')
 @Controller('health')
 export class HealthController {
   @Public()

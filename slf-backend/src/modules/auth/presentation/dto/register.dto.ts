@@ -11,7 +11,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
-import { UserRole } from '../../../../shared/types/user-role.enum';
+import { UserRole } from '@shared/types/user-role.enum';
 
 // ── Nested DTO: personal records (athlete) ────────────────────────────────────
 // Numeric values are sent as strings from the mobile form — @Type(() => Number)

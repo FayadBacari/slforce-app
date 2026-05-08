@@ -6,20 +6,22 @@ import { PaymentsRepository } from './data/repositories/payments.repository';
 import { PaymentsService } from './services/payments.service';
 import { StripeConnectService } from './services/stripe-connect.service';
 import { PaymentsController } from './presentation/payments.controller';
+import { PaymentsWebhookController } from './presentation/payments-webhook.controller';
 import { StripeRedirectController } from './presentation/stripe-redirect.controller';
-import { AuthModule } from '../auth/auth.module';
+import { UsersModule } from '../users/users.module';
 
-// AuthModule is imported to access UsersRepository (for stripeAccountId read/write).
-// ConfigModule is imported so PaymentsService can read STRIPE_PUBLISHABLE_KEY.
+// UsersModule est importé pour accéder à UsersRepository (lecture/écriture
+// du stripeAccountId sur le document User d'un coach).
+// ConfigModule donne accès à STRIPE_PUBLISHABLE_KEY et autres clés Stripe.
 @Module({
   imports: [
     ConfigModule,
     MongooseModule.forFeature([
       { name: Payment.name, schema: PaymentSchema },
     ]),
-    AuthModule,
+    UsersModule,
   ],
-  controllers: [PaymentsController, StripeRedirectController],
+  controllers: [PaymentsController, PaymentsWebhookController, StripeRedirectController],
   providers:   [PaymentsRepository, PaymentsService, StripeConnectService],
   exports:     [PaymentsService],
 })

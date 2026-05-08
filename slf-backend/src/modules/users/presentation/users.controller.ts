@@ -1,28 +1,46 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Put, Patch, Post, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Patch,
+  Post,
+  Put,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
-import { extname, join } from 'path';
-import { randomBytes } from 'crypto';
-import { ConfigService } from '@nestjs/config';
-import { UsersService, PlatformStatsResponse } from '../services/users.service';
-import { ChatService } from '../../chat/services/chat.service';
-import { CurrentUser } from '../../../shared/decorators/current-user.decorator';
-import { AuthenticatedUserPayload } from '../../../shared/types/authenticated-request.interface';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { memoryStorage } from 'multer';
+import { UsersService, type PlatformStatsResponse } from '../services/users.service';
+import { ChatService } from '@modules/chat/services/chat.service';
+import { CloudinaryService } from '@core/cloudinary/cloudinary.service';
+import { CurrentUser } from '@shared/decorators/current-user.decorator';
+import type { AuthenticatedUserPayload } from '@shared/types/authenticated-request.interface';
 import { UpdateProfileRequestDto } from './dto/update-profile.dto';
-import { AuthenticatedUserResponse } from '../../auth/presentation/dto/auth-response.dto';
-import { Public } from '../../../shared/decorators/public-route.decorator';
+import type { AuthenticatedUserResponse } from '@modules/auth/presentation/dto/auth-response.dto';
+import { Public } from '@shared/decorators/public-route.decorator';
 import {
   UpdatePrivacySettingsBodyDto,
   type PrivacySettingsResponseDto,
 } from './dto/privacy-settings.dto';
 
-// All routes here require a valid JWT (the global JwtAuthGuard handles that).
+// Toutes les routes ici nécessitent un JWT valide (le JwtAuthGuard global s'en
+// charge), à l'exception de celles annotées @Public().
+@ApiTags('Users')
+@ApiBearerAuth('access-token')
 @Controller('users')
 export class UsersController {
+  // 5 MB max — assez pour une photo HD, refuse les uploads abusifs.
+  private static readonly MAX_PROFILE_PHOTO_SIZE_BYTES = 5 * 1024 * 1024;
+
   constructor(
-    private readonly usersService:  UsersService,
-    private readonly chatService:   ChatService,
-    private readonly configService: ConfigService,
+    private readonly usersService:       UsersService,
+    private readonly chatService:        ChatService,
+    private readonly cloudinaryService:  CloudinaryService,
   ) {}
 
   // GET /api/v1/users/stats — public, no JWT required
@@ -48,19 +66,24 @@ export class UsersController {
     return this.usersService.updateCurrentUserProfile(currentUser.userId, fieldsToUpdate);
   }
 
-  // POST /api/v1/users/profile/photo — upload a profile photo
-  // Accepts multipart/form-data with a "photo" field.
-  // Saves the file to disk, persists the remote URL in MongoDB, and returns it.
+  // ─── POST /api/v1/users/profile/photo — upload de photo de profil ─────────
+  //
+  // Accepte multipart/form-data avec un champ "photo".
+  //
+  // Architecture : memory storage (pas de fichier sur disque) → buffer streamé
+  // directement vers Cloudinary → URL HTTPS persistée en MongoDB.
+  //
+  // Pourquoi pas de stockage local ?
+  //   • Les filesystems Render / Fly / K8s sont éphémères — fichiers perdus
+  //     au moindre redéploiement.
+  //   • Cloudinary délivre les images via CDN avec transformation à la volée
+  //     (resize, format auto webp/avif, qualité auto).
   @Post('profile/photo')
   @UseInterceptors(
     FileInterceptor('photo', {
-      storage: diskStorage({
-        destination: join(process.cwd(), 'uploads'),
-        filename: (_req, file, cb) => {
-          const uniqueSuffix = randomBytes(16).toString('hex');
-          cb(null, `${uniqueSuffix}${extname(file.originalname)}`);
-        },
-      }),
+      // Memory storage — le fichier vit en RAM le temps de l'upload Cloudinary.
+      // Pas d'écriture disque, pas de cleanup à gérer.
+      storage: memoryStorage(),
       fileFilter: (_req, file, cb) => {
         if (!file.mimetype.startsWith('image/')) {
           cb(new BadRequestException('Seules les images sont acceptées.'), false);
@@ -68,7 +91,7 @@ export class UsersController {
           cb(null, true);
         }
       },
-      limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB max
+      limits: { fileSize: UsersController.MAX_PROFILE_PHOTO_SIZE_BYTES },
     }),
   )
   async uploadProfilePhoto(
@@ -76,28 +99,35 @@ export class UsersController {
     @UploadedFile() file: Express.Multer.File | undefined,
   ): Promise<{ photoUrl: string }> {
     if (!file) throw new BadRequestException('Aucun fichier reçu.');
-    // Use APP_URL as the base so photos are served over HTTPS in production.
-    // Constructing http://host:port manually would break mixed-content rules.
-    const appUrl   = this.configService.getOrThrow<string>('app.appUrl');
-    const photoUrl = `${appUrl}/uploads/${file.filename}`;
+    if (!file.buffer || file.buffer.length === 0) {
+      throw new BadRequestException('Le fichier reçu est vide.');
+    }
 
-    // Write the remote URL to MongoDB — this is the single source of truth
-    await this.usersService.updateCurrentUserProfile(currentUser.userId, { profilePhotoUrl: photoUrl });
+    // 1. Upload vers Cloudinary — renvoie une URL HTTPS stable + un publicId.
+    const { secureUrl } = await this.cloudinaryService.uploadProfilePhoto(
+      file.buffer,
+      file.mimetype,
+      currentUser.userId,
+    );
 
-    // Best-effort: sync the new avatar to Stream Chat so the chat UI reflects
-    // the change immediately without waiting for the user to reconnect.
-    // We fire this without awaiting so a Stream error never blocks the response.
-    void this.chatService.updateUserImageInStream(currentUser.userId, photoUrl);
+    // 2. Persiste l'URL distante en MongoDB — source de vérité.
+    await this.usersService.updateCurrentUserProfile(currentUser.userId, {
+      profilePhotoUrl: secureUrl,
+    });
 
-    return { photoUrl };
+    // 3. Best-effort : sync l'avatar vers Stream Chat pour que les conversations
+    //    en cours reflètent le changement sans attendre une reconnexion.
+    //    Fire-and-forget — un fail Stream ne doit jamais bloquer la réponse HTTP.
+    void this.chatService.updateUserImageInStream(currentUser.userId, secureUrl);
+
+    return { photoUrl: secureUrl };
   }
 
   // ─── Account deletion ─────────────────────────────────────────────────────
 
   // DELETE /api/v1/users/account
-  // Soft-deletes the account: revokes all sessions, anonymises PII in MongoDB,
-  // and updates the Stream identity. The document is kept for audit/Stripe history.
-  // Returns 204 No Content on success.
+  // Soft-delete : révoque les sessions, anonymise les PII en MongoDB, met à
+  // jour l'identité Stream. Le document reste en DB pour audit/Stripe.
   @Delete('account')
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteMyAccount(
@@ -109,7 +139,6 @@ export class UsersController {
   // ─── Privacy settings ─────────────────────────────────────────────────────
 
   // GET /api/v1/users/privacy
-  // Returns the current user's privacy flags.
   @Get('privacy')
   getPrivacySettings(
     @CurrentUser() currentUser: AuthenticatedUserPayload,
@@ -118,8 +147,9 @@ export class UsersController {
   }
 
   // PATCH /api/v1/users/privacy
-  // Updates one or both privacy flags. Only provided fields are written.
-  // Also syncs showOnlineStatus to Stream so chat screens reflect it immediately.
+  // Met à jour un ou les deux flags privacy. Seuls les champs fournis sont
+  // écrits. Sync aussi showOnlineStatus vers Stream pour répercuter l'état
+  // dans les écrans chat des autres utilisateurs.
   @Patch('privacy')
   updatePrivacySettings(
     @CurrentUser() currentUser: AuthenticatedUserPayload,

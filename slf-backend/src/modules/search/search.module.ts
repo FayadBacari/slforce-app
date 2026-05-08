@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
-import { AuthModule } from '../auth/auth.module';
+import { UsersModule } from '../users/users.module';
 import { SearchController } from './presentation/search.controller';
 import { SearchService } from './services/search.service';
 
-// AuthModule exports UsersRepository which SearchService needs to query coaches.
+// SearchService consomme UsersRepository (exporté par UsersModule)
+// pour requêter les coachs et athlètes les plus récemment inscrits.
 @Module({
-  imports:     [AuthModule],
+  imports:     [UsersModule],
   controllers: [SearchController],
   providers:   [SearchService],
 })

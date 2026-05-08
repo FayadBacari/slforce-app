@@ -10,6 +10,7 @@ import { databaseConfig } from './core/config/database.config';
 import { jwtConfig } from './core/config/jwt.config';
 import { securityConfig } from './core/config/security.config';
 import { emailConfig } from './core/config/email.config';
+import { cloudinaryConfig } from './core/config/cloudinary.config';
 import { environmentValidationSchema } from './core/config/environment.validation';
 
 // Core
@@ -35,7 +36,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
     ConfigModule.forRoot({
       isGlobal:           true,
       envFilePath:        '.env',
-      load:               [appConfig, databaseConfig, jwtConfig, securityConfig, emailConfig],
+      load:               [appConfig, databaseConfig, jwtConfig, securityConfig, emailConfig, cloudinaryConfig],
       validationSchema:   environmentValidationSchema,
       validationOptions:  { abortEarly: true },
     }),
