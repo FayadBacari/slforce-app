@@ -2,12 +2,12 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlashList } from '@shopify/flash-list';
-import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '@shared/theme/theme-provider';
 import { AppLoadingSpinner } from '@shared/components/app-loading-spinner/app-loading-spinner';
 import { AppErrorMessage } from '@shared/components/app-error-message/app-error-message';
 import { prewarmConversationChannel } from '@core/stream-chat/stream-chat-client';
+import { APP_ROUTES, pushRoute } from '@shared/navigation/app-routes';
 import { ConversationListItem } from '../components/conversation-list-item/conversation-list-item';
 import { useConversationList } from '../hooks/use-conversation-list.hook';
 import { buildConversationListScreenStyles } from '../styles/conversation-list-screen.styles';
@@ -25,11 +25,10 @@ import type { ConversationEntity } from '../../domain/entities/conversation.enti
 //   3. Forward known data via params (name, photo) so the conversation header
 //      shows immediately, before the heavy state finishes loading
 //   4. FlashList v2 with stable keyExtractor — auto-recycles cells optimally
-export function ConversationListScreen() {
+export function ConversationListScreen(): React.JSX.Element {
   const { t }     = useTranslation();
   const { theme } = useTheme();
-  const router    = useRouter();
-  const styles    = buildConversationListScreenStyles(theme);
+  const styles    = useMemo(() => buildConversationListScreenStyles(theme), [theme]);
 
   const {
     listOfConversations,
@@ -59,17 +58,17 @@ export function ConversationListScreen() {
       // Fire-and-forget — the channel will be hot by the time the screen mounts
       void prewarmConversationChannel(conversationId);
 
-      router.push({
-        pathname: '/(private)/chat/[conversation-id]' as never,
+      pushRoute({
+        pathname: APP_ROUTES.private.chatConversation,
         params: {
           'conversation-id': conversationId,
           participantId:     tappedConversation?.otherParticipantId   ?? '',
           participantName:   tappedConversation?.otherParticipantName ?? '',
           participantPhoto:  tappedConversation?.otherParticipantPhoto ?? '',
         },
-      } as never);
+      });
     },
-    [router, listOfConversations],
+    [listOfConversations],
   );
 
   // Memoised renderItem — passing a stable function reference lets FlashList
@@ -99,12 +98,14 @@ export function ConversationListScreen() {
           <Text style={styles.searchIcon}>🔍</Text>
           <TextInput
             style={styles.searchInput}
-            placeholder="Rechercher..."
-            placeholderTextColor="#9CA3AF"
+            placeholder={t('chat.searchPlaceholder')}
+            placeholderTextColor={theme.colors.textDisabled}
             value={searchQuery}
             onChangeText={setSearchQuery}
             autoCorrect={false}
             autoCapitalize="none"
+            returnKeyType="search"
+            accessibilityLabel={t('chat.searchPlaceholder')}
           />
         </View>
       </View>

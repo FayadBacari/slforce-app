@@ -1,26 +1,35 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Animated } from 'react-native';
-import { useRouter } from 'expo-router';
 import { useAuthenticationStore } from '@stores/authentication-store';
 import { usePendingRegistrationStore } from '@stores/pending-registration-store';
 import { useCoachProfileStore } from '@stores/coach-profile-store';
 import { authenticationRepository } from '../../data/repositories/authentication.repository';
 import { convertAnyErrorToAppError } from '@core/api/api-error-handler';
 import { connectCurrentUserToStreamChat } from '@core/stream-chat/stream-chat-client';
-import { apiClient } from '@core/api/api-client';
-import { API_ENDPOINTS } from '@core/api/api-endpoints';
-import { unwrapBackendEnvelope, type BackendSuccessEnvelope } from '@core/api/api-response-envelope';
+import { callGetStreamChatTokenApiEndpoint } from '@modules/chat/data/data-sources/chat-token-api.data-source';
+import { APP_ROUTES, replaceRoute } from '@shared/navigation/app-routes';
+import { ONBOARDING_FADE_DURATION_MS } from '@shared/constants/app-constants';
+import { createLogger } from '@shared/logger/logger';
+import {
+  COACH_DISCIPLINE_OPTIONS,
+  MAX_COACH_DISCIPLINES,
+} from '@modules/users/domain/constants/disciplines';
 import type { CoachProfileData } from '../../domain/entities/user.entity';
 
-const FADE_DURATION_MS = 120;
+const logger = createLogger('RegisterCoachOnboarding');
+
 const TOTAL_STEPS = 7;
 
-export const SPECIALITY_OPTIONS  = ['Calisthenics', 'Autre'] as const;
-export const DISCIPLINE_OPTIONS  = ['Street-Lifting', 'Endurance', 'Freestyle', 'Set and Rep'] as const;
-export const MAX_DISCIPLINES     = 2;
+export const SPECIALITY_OPTIONS = ['Calisthenics', 'Autre'] as const;
+
+// Re-export pour ne pas casser les écrans qui importent depuis ce hook.
+// La source de vérité est maintenant @modules/users/domain/constants/.
+export {
+  COACH_DISCIPLINE_OPTIONS as DISCIPLINE_OPTIONS,
+  MAX_COACH_DISCIPLINES as MAX_DISCIPLINES,
+};
 
 export function useRegisterCoachOnboarding() {
-  const router            = useRouter();
   const saveLoginData     = useAuthenticationStore((s) => s.saveLoginDataAfterSuccessfulLogin);
   const pendingAccount    = usePendingRegistrationStore((s) => s.pendingAccount);
   const clearPending      = usePendingRegistrationStore((s) => s.clearPendingAccountData);
@@ -44,8 +53,8 @@ export function useRegisterCoachOnboarding() {
   // ── Animation ───────────────────────────────────────────────────────────────
   const animateStep = useCallback((callback: () => void) => {
     Animated.sequence([
-      Animated.timing(fadeAnim, { toValue: 0, duration: FADE_DURATION_MS, useNativeDriver: true }),
-      Animated.timing(fadeAnim, { toValue: 1, duration: FADE_DURATION_MS, useNativeDriver: true }),
+      Animated.timing(fadeAnim, { toValue: 0, duration: ONBOARDING_FADE_DURATION_MS, useNativeDriver: true }),
+      Animated.timing(fadeAnim, { toValue: 1, duration: ONBOARDING_FADE_DURATION_MS, useNativeDriver: true }),
     ]).start();
     callback();
   }, [fadeAnim]);
@@ -69,7 +78,7 @@ export function useRegisterCoachOnboarding() {
       if (prev.skills.includes(discipline)) {
         return { ...prev, skills: prev.skills.filter((s) => s !== discipline) };
       }
-      if (prev.skills.length >= MAX_DISCIPLINES) return prev;
+      if (prev.skills.length >= MAX_COACH_DISCIPLINES) return prev;
       return { ...prev, skills: [...prev.skills, discipline] };
     });
   }, []);
@@ -105,30 +114,28 @@ export function useRegisterCoachOnboarding() {
         refreshToken: authResult.refreshToken,
       });
 
-      // Connect to Stream Chat — token is now obtainable because the JWT is saved
+      // Connect to Stream Chat — token is obtainable now that the JWT is saved.
+      // Best-effort : un échec ici ne doit JAMAIS bloquer l'inscription.
       try {
-        const streamTokenResponse = await apiClient.get<BackendSuccessEnvelope<{ token: string }>>(
-          API_ENDPOINTS.chat.getStreamChatToken,
-        );
-        const { token: streamToken } = unwrapBackendEnvelope(streamTokenResponse);
+        const streamToken = await callGetStreamChatTokenApiEndpoint();
         await connectCurrentUserToStreamChat(
           authResult.user.id,
           `${authResult.user.firstName} ${authResult.user.lastName}`,
           authResult.user.profilePhotoUrl,
           streamToken,
         );
-      } catch {
-        // Chat failing must never block registration
+      } catch (chatConnectError) {
+        logger.warn('Stream Chat connection failed during registration (non-fatal)', chatConnectError);
       }
 
-      router.replace('/(private)/(coach)/profile' as never);
+      replaceRoute(APP_ROUTES.private.coachProfile);
     } catch (unknownError) {
       const appError = convertAnyErrorToAppError(unknownError);
       setErrorMessage(appError.userFriendlyMessage);
     } finally {
       setLoading(false);
     }
-  }, [pendingAccount, profileData, hydrateCoachProfile, clearPending, saveLoginData, router]);
+  }, [pendingAccount, profileData, hydrateCoachProfile, clearPending, saveLoginData]);
 
   // ── canProceed per step ──────────────────────────────────────────────────────
   const canProceed = useMemo(() => {

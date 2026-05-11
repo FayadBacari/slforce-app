@@ -1,12 +1,13 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, Image } from 'react-native';
-import { useRouter, usePathname } from 'expo-router';
+import { usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '@shared/theme/theme-provider';
 import { useAuthenticationStore } from '@stores/authentication-store';
 import { APP_IMAGES } from '@shared/assets/app-images';
 import { useUnreadMessageCount } from '@modules/chat/presentation/hooks/use-unread-count.hook';
+import { APP_ROUTES, pushRoute, type AppRouteTarget } from '@shared/navigation/app-routes';
 import { buildMainBottomNavStyles } from './main-bottom-nav.styles';
 
 // The 4 main tabs of the app, in display order — mirrors the legacy bottom nav:
@@ -18,15 +19,18 @@ type TabKey = 'profile' | 'search' | 'chat' | 'settings';
 
 interface BottomTabConfig {
   key:      TabKey;
-  labelKey: string;
+  // Clé i18n COMPLÈTE (avec namespace) — corrige le bug où des clés brutes
+  // ('profil', 'recherche'...) étaient affichées telles quelles parce que le
+  // namespace `navigation.*` n'avait jamais été utilisé.
+  labelKey: 'navigation.profile' | 'navigation.search' | 'navigation.chat' | 'navigation.settings';
   imageKey: keyof typeof APP_IMAGES;
 }
 
-const BOTTOM_TABS: BottomTabConfig[] = [
-  { key: 'profile',  labelKey: 'profil',   imageKey: 'athlete'  },
-  { key: 'search',   labelKey: 'recherche', imageKey: 'search'   },
-  { key: 'chat',     labelKey: 'messages',  imageKey: 'message'  },
-  { key: 'settings', labelKey: 'réglage',   imageKey: 'setting'  },
+const BOTTOM_TABS: ReadonlyArray<BottomTabConfig> = [
+  { key: 'profile',  labelKey: 'navigation.profile',  imageKey: 'athlete' },
+  { key: 'search',   labelKey: 'navigation.search',   imageKey: 'search'  },
+  { key: 'chat',     labelKey: 'navigation.chat',     imageKey: 'message' },
+  { key: 'settings', labelKey: 'navigation.settings', imageKey: 'setting' },
 ];
 
 // Persistent bottom navigation bar rendered by `app/(private)/_layout.tsx`.
@@ -36,36 +40,37 @@ const BOTTOM_TABS: BottomTabConfig[] = [
 //
 // The Messages tab shows a live red unread-count badge sourced directly from
 // the Stream Chat WebSocket — no polling, no extra API call.
-export function MainBottomNav() {
+export function MainBottomNav(): React.JSX.Element {
   const { theme }       = useTheme();
   const { t }           = useTranslation();
-  const router          = useRouter();
   const currentPathname = usePathname();
   const safeAreaInsets  = useSafeAreaInsets();
   const loggedInUser    = useAuthenticationStore((store) => store.loggedInUser);
 
   const currentUserRole = loggedInUser?.role ?? 'athlete';
-  const styles          = buildMainBottomNavStyles(theme, safeAreaInsets.bottom);
+  const styles          = useMemo(
+    () => buildMainBottomNavStyles(theme, safeAreaInsets.bottom),
+    [theme, safeAreaInsets.bottom],
+  );
 
   // Live unread count — updates via Stream Chat events, 0 when not connected
   const totalUnreadMessages = useUnreadMessageCount();
   const unreadLabel = totalUnreadMessages > 99 ? '99+' : String(totalUnreadMessages);
 
   // Maps a tab key to the destination route, branching on role for profile/search.
-  function getTargetRouteForTab(tabKey: TabKey): string {
+  function getTargetRouteForTab(tabKey: TabKey): AppRouteTarget {
     if (tabKey === 'profile') {
       return currentUserRole === 'coach'
-        ? '/(private)/(coach)/profile'
-        : '/(private)/(athlete)/profile';
+        ? APP_ROUTES.private.coachProfile
+        : APP_ROUTES.private.athleteProfile;
     }
     if (tabKey === 'search') {
       return currentUserRole === 'coach'
-        ? '/(private)/(coach)/search'
-        : '/(private)/(athlete)/search';
+        ? APP_ROUTES.private.coachSearch
+        : APP_ROUTES.private.athleteSearch;
     }
-    if (tabKey === 'chat')     return '/(private)/chat';
-    if (tabKey === 'settings') return '/(private)/settings';
-    return '/';
+    if (tabKey === 'chat')     return APP_ROUTES.private.chat;
+    return APP_ROUTES.private.settings;
   }
 
   // Marks a tab as active based on the current path.
@@ -77,9 +82,9 @@ export function MainBottomNav() {
     return false;
   }
 
-  function handleTabPressed(tabKey: TabKey) {
+  function handleTabPressed(tabKey: TabKey): void {
     if (isTabCurrentlyActive(tabKey)) return;
-    router.push(getTargetRouteForTab(tabKey) as never);
+    pushRoute(getTargetRouteForTab(tabKey));
   }
 
   return (

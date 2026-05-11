@@ -1,36 +1,37 @@
-import React from 'react';
+import React, { memo, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Alert } from 'react-native';
-import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@shared/theme/theme-provider';
 import { useAuthenticationStore } from '@stores/authentication-store';
 import { authenticationRepository } from '@modules/authentication/data/repositories/authentication.repository';
 import { disconnectCurrentUserFromStreamChat } from '@core/stream-chat/stream-chat-client';
+import {
+  APP_ROUTES,
+  buildSettingsRoute,
+  pushRoute,
+  replaceRoute,
+} from '@shared/navigation/app-routes';
+import { createLogger } from '@shared/logger/logger';
 import { buildSettingsIndexStyles } from '@screen-styles/settings/index.styles';
 
-// A single row in the settings menu
-interface SettingsRowProps {
-  icon:        string;
-  label:       string;
-  onPress:     () => void;
-  isDanger?:   boolean;
-  showChevron?: boolean;
-  styles:      ReturnType<typeof buildSettingsIndexStyles>;
-}
+// Type alias permettant à TypeScript de garantir que `navigateTo()` ne reçoit
+// que des sub-pages connues — supprime un magic-string runtime.
+type SettingsSubPage = Parameters<typeof buildSettingsRoute>[0];
 
-export default function SettingsIndexPage() {
+const logger = createLogger('SettingsIndex');
+
+export default function SettingsIndexPage(): React.JSX.Element {
   const { t } = useTranslation();
   const { theme, toggleDarkMode } = useTheme();
-  const router = useRouter();
   const loggedInUser         = useAuthenticationStore((store) => store.loggedInUser);
   const clearAllDataOnLogout = useAuthenticationStore((store) => store.clearAllDataOnLogout);
 
   const isCoach = loggedInUser?.role === 'coach';
-  const styles  = buildSettingsIndexStyles(theme);
+  const styles  = useMemo(() => buildSettingsIndexStyles(theme), [theme]);
 
   // Shows a confirmation dialog before logging out
-  function askUserToConfirmLogout() {
+  const askUserToConfirmLogout = useCallback((): void => {
     Alert.alert(
       t('settings.logoutConfirmTitle'),
       t('settings.logoutConfirmMessage'),
@@ -43,22 +44,27 @@ export default function SettingsIndexPage() {
         },
       ],
     );
-  }
+  }, [t]);
 
-  async function handleLogoutConfirmed() {
+  async function handleLogoutConfirmed(): Promise<void> {
     try {
       await authenticationRepository.logoutCurrentUser();
-    } catch {
-      // Continue logout even if the server call fails
+    } catch (logoutError) {
+      // Best-effort : on continue même si l'appel serveur échoue (token expiré
+      // par exemple) — la session locale est nettoyée juste après.
+      logger.warn('Server logout call failed, continuing local cleanup', logoutError);
     }
     await disconnectCurrentUserFromStreamChat();
     await clearAllDataOnLogout();
-    router.replace('/(public)/login');
+    replaceRoute(APP_ROUTES.public.login);
   }
 
-  function navigateTo(subPage: string) {
-    router.push(`/(private)/settings/${subPage}` as never);
-  }
+  const navigateTo = useCallback(
+    (subPage: SettingsSubPage): void => {
+      pushRoute(buildSettingsRoute(subPage));
+    },
+    [],
+  );
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -120,7 +126,12 @@ export default function SettingsIndexPage() {
         </View>
 
         {/* Logout button */}
-        <TouchableOpacity style={styles.logoutButton} onPress={askUserToConfirmLogout}>
+        <TouchableOpacity
+          style={styles.logoutButton}
+          onPress={askUserToConfirmLogout}
+          accessibilityRole="button"
+          accessibilityLabel={t('settings.logout')}
+        >
           <Text style={styles.logoutButtonLabel}>{t('settings.logout')}</Text>
         </TouchableOpacity>
 
@@ -131,12 +142,36 @@ export default function SettingsIndexPage() {
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
-function SettingsRow({ icon, label, onPress, isDanger = false, showChevron = true, styles }: SettingsRowProps) {
+interface SettingsRowProps {
+  icon:        string;
+  label:       string;
+  onPress:     () => void;
+  isDanger?:   boolean;
+  showChevron?: boolean;
+  styles:      ReturnType<typeof buildSettingsIndexStyles>;
+}
+
+// React.memo : la liste de settings ré-render à chaque toggle dark mode.
+// Sans memo, les 7 rows recréent leur arbre alors que rien ne change.
+const SettingsRow = memo(function SettingsRow({
+  icon,
+  label,
+  onPress,
+  isDanger = false,
+  showChevron = true,
+  styles,
+}: SettingsRowProps): React.JSX.Element {
   return (
-    <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.6}>
+    <TouchableOpacity
+      style={styles.row}
+      onPress={onPress}
+      activeOpacity={0.6}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
       <Text style={styles.rowIcon}>{icon}</Text>
       <Text style={[styles.rowLabel, isDanger && styles.dangerLabel]}>{label}</Text>
       {showChevron && <Text style={styles.chevron}>›</Text>}
     </TouchableOpacity>
   );
-}
+});

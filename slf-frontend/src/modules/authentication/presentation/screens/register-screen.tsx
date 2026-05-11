@@ -1,9 +1,8 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   View, Text, TouchableOpacity,
   KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native';
-import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '@shared/theme/theme-provider';
 import { AppScreenWrapper } from '@shared/components/app-screen-wrapper/app-screen-wrapper';
@@ -11,6 +10,7 @@ import { AppTextInput } from '@shared/components/app-text-input/app-text-input';
 import { AppButton } from '@shared/components/app-button/app-button';
 import { AppErrorMessage } from '@shared/components/app-error-message/app-error-message';
 import { AppLogo } from '@shared/components/app-logo/app-logo';
+import { APP_ROUTES, pushRoute } from '@shared/navigation/app-routes';
 import { useRegisterForm } from '../hooks/use-register-form.hook';
 import { buildRegisterScreenStyles } from '../styles/register-screen.styles';
 import type { UserRole } from '@shared/types/user.types';
@@ -21,11 +21,10 @@ interface RegisterScreenProps {
 
 // One screen handles both athlete and coach registration.
 // The only difference is the "role" prop passed in from the navigation.
-export function RegisterScreen({ role }: RegisterScreenProps) {
+export function RegisterScreen({ role }: RegisterScreenProps): React.JSX.Element {
   const { t } = useTranslation();
   const { theme } = useTheme();
-  const router = useRouter();
-  const styles = buildRegisterScreenStyles(theme);
+  const styles = useMemo(() => buildRegisterScreenStyles(theme), [theme]);
 
   const {
     firstNameInput, setFirstNameInput,
@@ -128,7 +127,9 @@ export function RegisterScreen({ role }: RegisterScreenProps) {
 
             <TouchableOpacity
               style={styles.loginLink}
-              onPress={() => router.push('/(public)/login' as never)}
+              onPress={() => pushRoute(APP_ROUTES.public.login)}
+              accessibilityRole="link"
+              accessibilityLabel={t('auth.login')}
             >
               <Text style={styles.loginLinkText}>
                 {t('auth.alreadyHaveAccount')}{' '}

@@ -1,6 +1,5 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
-import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '@shared/theme/theme-provider';
 import { AppScreenWrapper } from '@shared/components/app-screen-wrapper/app-screen-wrapper';
@@ -8,14 +7,14 @@ import { AppTextInput } from '@shared/components/app-text-input/app-text-input';
 import { AppButton } from '@shared/components/app-button/app-button';
 import { AppErrorMessage } from '@shared/components/app-error-message/app-error-message';
 import { AppLogo } from '@shared/components/app-logo/app-logo';
+import { APP_ROUTES, pushRoute } from '@shared/navigation/app-routes';
 import { useLoginForm } from '../hooks/use-login-form.hook';
 import { buildLoginScreenStyles } from '../styles/login-screen.styles';
 
-export function LoginScreen() {
+export function LoginScreen(): React.JSX.Element {
   const { t } = useTranslation();
   const { theme } = useTheme();
-  const router = useRouter();
-  const styles = buildLoginScreenStyles(theme);
+  const styles = useMemo(() => buildLoginScreenStyles(theme), [theme]);
 
   const {
     emailInputValue, passwordInputValue, isPasswordVisible,
@@ -57,6 +56,8 @@ export function LoginScreen() {
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
+              autoComplete="email"
+              textContentType="emailAddress"
               errorMessage={emailFieldError}
               placeholder="exemple@email.com"
               returnKeyType="next"
@@ -67,6 +68,8 @@ export function LoginScreen() {
               value={passwordInputValue}
               onChangeText={setPasswordInputValue}
               secureTextEntry={!isPasswordVisible}
+              autoComplete="password"
+              textContentType="password"
               errorMessage={passwordFieldError}
               placeholder="••••••••"
               returnKeyType="done"
@@ -80,8 +83,10 @@ export function LoginScreen() {
             />
 
             <TouchableOpacity
-              onPress={() => router.push('/(public)/forgot-password' as never)}
+              onPress={() => pushRoute(APP_ROUTES.public.forgotPassword)}
               style={styles.forgotPasswordLink}
+              accessibilityRole="link"
+              accessibilityLabel={t('auth.forgotPassword')}
             >
               <Text style={styles.forgotPasswordText}>{t('auth.forgotPassword')}</Text>
             </TouchableOpacity>
@@ -99,7 +104,9 @@ export function LoginScreen() {
             <View style={styles.registerPromptRow}>
               <Text style={styles.registerPromptText}>{t('auth.noAccount')}</Text>
               <TouchableOpacity
-                onPress={() => router.push('/(public)/role-selection' as never)}
+                onPress={() => pushRoute(APP_ROUTES.public.roleSelection)}
+                accessibilityRole="link"
+                accessibilityLabel={t('auth.createAccount')}
               >
                 <Text style={styles.registerLinkText}>{t('auth.createAccount')}</Text>
               </TouchableOpacity>

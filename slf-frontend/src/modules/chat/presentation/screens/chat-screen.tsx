@@ -1,13 +1,16 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { Alert, View, Text, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import * as ImagePicker    from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { FlashList } from '@shopify/flash-list';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import { useTheme } from '@shared/theme/theme-provider';
 import { AppAvatar } from '@shared/components/app-avatar/app-avatar';
 import { AppErrorMessage } from '@shared/components/app-error-message/app-error-message';
+import { APP_ROUTES, pushRoute } from '@shared/navigation/app-routes';
+import { readSearchParam } from '@shared/navigation/read-search-param';
 import { MessageBubble } from '../components/message-bubble/message-bubble';
 import { MessageInputBar } from '../components/message-input-bar/message-input-bar';
 import { useChatScreen } from '../hooks/use-chat-screen.hook';
@@ -15,33 +18,26 @@ import { buildChatScreenStyles } from '../styles/chat-screen.styles';
 import { useAuthenticationStore } from '@stores/authentication-store';
 import type { MessageEntity } from '../../domain/entities/message.entity';
 
-export function ChatScreen() {
+export function ChatScreen(): React.JSX.Element {
+  const { t }     = useTranslation();
   const { theme } = useTheme();
-  const router    = useRouter();
-  const styles    = buildChatScreenStyles(theme);
+  const router    = useRouter();   // utilisé pour `router.back()` après delete/block
+  const styles    = useMemo(() => buildChatScreenStyles(theme), [theme]);
 
   // Params forwarded by the conversation list when the user taps a row.
   // Receiving these lets the header render IMMEDIATELY — no flash of empty state
   // while the channel state finishes loading in the background.
-  // Expo Router v6's `Route` constraint is too strict for custom param types,
-  // so we read the raw record and coerce each value to a string ourselves.
-  const rawParams = useLocalSearchParams() as Record<string, string | string[] | undefined>;
-  const readParamAsString = (key: string): string => {
-    const value = rawParams[key];
-    if (Array.isArray(value)) return value[0] ?? '';
-    return value ?? '';
-  };
-
-  const conversationId   = readParamAsString('conversation-id');
-  const participantName  = readParamAsString('participantName');
-  const participantPhoto = readParamAsString('participantPhoto') || undefined;
+  const rawParams        = useLocalSearchParams();
+  const conversationId   = readSearchParam(rawParams, 'conversation-id');
+  const participantName  = readSearchParam(rawParams, 'participantName');
+  const participantPhoto = readSearchParam(rawParams, 'participantPhoto') || undefined;
 
   const currentUserId = useAuthenticationStore((store) => store.loggedInUser?.id ?? '');
 
   // The participant's Stream / MongoDB user ID is forwarded as a param from the
   // conversation list (instant access). The hook also resolves it asynchronously
   // from the channel state as a fallback (covers deep-link entry).
-  const participantId = readParamAsString('participantId');
+  const participantId = readSearchParam(rawParams, 'participantId');
 
   // Current user's role — gates the "Effectuer un paiement" menu option.
   const userRole  = useAuthenticationStore((store) => store.loggedInUser?.role);
@@ -77,16 +73,16 @@ export function ChatScreen() {
     const menuItems = [
       // ── Delete conversation ──────────────────────────────────────────────
       {
-        text:  'Supprimer la conversation',
+        text:  t('chat.deleteConversation'),
         style: 'destructive' as const,
         onPress: () =>
           Alert.alert(
-            'Supprimer la conversation ?',
-            'Cette conversation disparaîtra de votre liste. Si vous recevez un nouveau message, elle réapparaîtra.',
+            t('chat.deleteConfirmTitle'),
+            t('chat.deleteConfirmMessage'),
             [
-              { text: 'Annuler', style: 'cancel' as const },
+              { text: t('common.cancel'), style: 'cancel' as const },
               {
-                text:  'Supprimer',
+                text:  t('common.delete'),
                 style: 'destructive' as const,
                 onPress: async () => {
                   await deleteConversation();
@@ -98,16 +94,16 @@ export function ChatScreen() {
       },
       // ── Block user ───────────────────────────────────────────────────────
       {
-        text:  "Bloquer l'utilisateur",
+        text:  t('chat.blockUser'),
         style: 'destructive' as const,
         onPress: () =>
           Alert.alert(
-            'Bloquer cet utilisateur ?',
-            `${participantName || 'Cet utilisateur'} ne pourra plus vous contacter depuis cette conversation.`,
+            t('chat.blockConfirmTitle'),
+            t('chat.blockConfirmMessage'),
             [
-              { text: 'Annuler', style: 'cancel' as const },
+              { text: t('common.cancel'), style: 'cancel' as const },
               {
-                text:  'Bloquer',
+                text:  t('chat.blockUser'),
                 style: 'destructive' as const,
                 onPress: async () => {
                   await blockUser();
@@ -121,25 +117,25 @@ export function ChatScreen() {
       ...(isAthlete
         ? [
             {
-              text:    'Effectuer un paiement',
+              text:    t('chat.sendPaymentRequest'),
               style:   'default' as const,
               onPress: () => {
-                router.push({
-                  pathname: '/(private)/chat/make-payment' as never,
+                pushRoute({
+                  pathname: APP_ROUTES.private.chatMakePayment,
                   params:   {
                     coachId:   resolvedParticipantId,
                     coachName: participantName,
                   },
-                } as never);
+                });
               },
             },
           ]
         : []),
       // ── Cancel ───────────────────────────────────────────────────────────
-      { text: 'Annuler', style: 'cancel' as const, onPress: undefined },
+      { text: t('common.cancel'), style: 'cancel' as const, onPress: undefined },
     ];
 
-    Alert.alert('Options', '', menuItems);
+    Alert.alert(t('chat.actionMenuTitle'), '', menuItems);
   }, [
     deleteConversation,
     blockUser,
@@ -147,19 +143,20 @@ export function ChatScreen() {
     resolvedParticipantId,
     participantName,
     router,
+    t,
   ]);
 
   // ─── Attachment picker ─────────────────────────────────────────────────────
   const handleAttachPressed = useCallback(() => {
-    Alert.alert('Joindre un fichier', '', [
+    Alert.alert(t('chat.attachmentMenuTitle'), '', [
       {
-        text: 'Photo / Image',
+        text: t('chat.attachmentPhoto'),
         onPress: async () => {
           const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
           if (permission.status !== 'granted') {
             Alert.alert(
-              'Permission refusée',
-              'Autorise l\'accès à ta galerie dans les Réglages.',
+              t('errors.forbidden'),
+              t('errors.unknown'),
             );
             return;
           }
@@ -179,7 +176,7 @@ export function ChatScreen() {
         },
       },
       {
-        text: 'Document / PDF',
+        text: t('chat.attachmentDocument'),
         onPress: async () => {
           const result = await DocumentPicker.getDocumentAsync({
             type:                 '*/*',
@@ -196,9 +193,9 @@ export function ChatScreen() {
           }
         },
       },
-      { text: 'Annuler', style: 'cancel' },
+      { text: t('common.cancel'), style: 'cancel' },
     ]);
-  }, [sendAttachment]);
+  }, [sendAttachment, t]);
 
   // ─── Render single bubble ──────────────────────────────────────────────────
   const renderMessageItem = useCallback(
@@ -226,28 +223,30 @@ export function ChatScreen() {
           style={styles.headerBackButton}
           onPress={() => router.back()}
           activeOpacity={0.6}
+          accessibilityRole="button"
+          accessibilityLabel={t('common.back')}
         >
           <Text style={styles.headerBackArrow}>‹</Text>
         </TouchableOpacity>
 
         <AppAvatar
           photoUrl={participantPhoto}
-          fullName={participantName || 'Utilisateur'}
+          fullName={participantName || t('common.you')}
           size="sm"
         />
 
         <View style={styles.headerTitleColumn}>
           <Text style={styles.headerParticipantName} numberOfLines={1}>
-            {participantName || 'Conversation'}
+            {participantName || t('chat.title')}
           </Text>
           <Text style={styles.headerStatusText}>
             {isLoadingMessages
-              ? 'Chargement…'
+              ? t('common.loading')
               : isParticipantOnlineStatusHidden
-                ? 'Désactivé'
+                ? t('common.offline')
                 : isParticipantOnline
-                  ? '🟢 En ligne'
-                  : 'Hors ligne'}
+                  ? `🟢 ${t('chat.onlineNow')}`
+                  : t('chat.offlineNow')}
           </Text>
         </View>
 

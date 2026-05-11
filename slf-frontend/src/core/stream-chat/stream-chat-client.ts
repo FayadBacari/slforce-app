@@ -1,4 +1,8 @@
 import { StreamChat, type Channel } from 'stream-chat';
+import {
+  STREAM_CHAT_TIMEOUT_MS,
+  STREAM_CHAT_CLEANUP_DEBOUNCE_MS,
+} from '@shared/constants/app-constants';
 
 const STREAM_CHAT_API_KEY = process.env.EXPO_PUBLIC_STREAM_CHAT_API_KEY ?? '';
 
@@ -7,7 +11,7 @@ const STREAM_CHAT_API_KEY = process.env.EXPO_PUBLIC_STREAM_CHAT_API_KEY ?? '';
 // Sharing one instance means ONE WebSocket connection handles ALL real-time messages.
 // Creating multiple instances would open multiple connections and kill performance.
 const streamChatClient = StreamChat.getInstance(STREAM_CHAT_API_KEY, {
-  timeout: 6000,
+  timeout:          STREAM_CHAT_TIMEOUT_MS,
   enableWSFallback: true,   // Falls back to polling if WebSocket is unavailable
 });
 
@@ -81,14 +85,6 @@ export async function openOrCreateConversationBetweenTwoUsers(
   return conversationChannel;
 }
 
-// Opens an existing conversation channel by its unique ID.
-// Used when navigating from the conversation list to a specific chat.
-export async function openExistingConversationById(channelId: string): Promise<Channel> {
-  const channel = streamChatClient.channel('messaging', channelId);
-  await channel.watch();
-  return channel;
-}
-
 // ─── PRE-WARM (perf-critical) ─────────────────────────────────────────────────
 // Caches in-flight `watch()` promises so calling prewarm multiple times for the
 // same channel doesn't fire multiple network requests. The conversation screen
@@ -115,20 +111,13 @@ export function prewarmConversationChannel(channelId: string): Promise<Channel> 
   // We keep the entry briefly (5s) to absorb the screen mount round-trip,
   // then clean up so we don't leak old promises forever.
   newWarmup.finally(() => {
-    setTimeout(() => channelWarmupPromisesByChannelId.delete(channelId), 5_000);
+    setTimeout(
+      () => channelWarmupPromisesByChannelId.delete(channelId),
+      STREAM_CHAT_CLEANUP_DEBOUNCE_MS,
+    );
   });
 
   return newWarmup;
-}
-
-// ─── MESSAGES ────────────────────────────────────────────────────────────────
-
-// Sends a text message to a conversation channel.
-export async function sendTextMessageToConversation(
-  channel: Channel,
-  messageText: string,
-): Promise<void> {
-  await channel.sendMessage({ text: messageText });
 }
 
 // ─── UNREAD COUNTS ────────────────────────────────────────────────────────────

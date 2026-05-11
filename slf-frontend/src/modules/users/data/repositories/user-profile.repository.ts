@@ -2,6 +2,10 @@
 //
 // Thin orchestration layer between stores/hooks and the API data source.
 // Add caching, retry logic, or offline fallbacks here — callers stay untouched.
+//
+// Toutes les méthodes ici délèguent vers la couche `data-sources/`. Aucun
+// composant ni hook ne doit appeler `apiClient` directement (cf. règle ESLint
+// `no-restricted-imports` côté projet).
 
 import {
   callGetUserProfileApiEndpoint,
@@ -17,7 +21,9 @@ export const userProfileRepository = {
   getProfile:    (): Promise<UserProfileRaw> =>
     callGetUserProfileApiEndpoint(),
 
-  updateProfile: (payload: Partial<UserProfileRaw>): Promise<void> =>
+  // Met à jour le profil et renvoie la version persistée par le backend
+  // (utile pour récupérer les valeurs coerced ou les champs générés).
+  updateProfile: (payload: Partial<UserProfileRaw>): Promise<UserProfileRaw> =>
     callUpdateUserProfileApiEndpoint(payload),
 
   // ── Privacy ──────────────────────────────────────────────────────────────

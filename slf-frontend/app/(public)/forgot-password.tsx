@@ -1,9 +1,8 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View, Text, TouchableOpacity,
   KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native';
-import { useRouter } from 'expo-router';
 import { AppScreenWrapper } from '@shared/components/app-screen-wrapper/app-screen-wrapper';
 import { AppLogo } from '@shared/components/app-logo/app-logo';
 import { AppTextInput } from '@shared/components/app-text-input/app-text-input';
@@ -11,12 +10,15 @@ import { AppButton } from '@shared/components/app-button/app-button';
 import { useTheme } from '@shared/theme/theme-provider';
 import { validateEmailAddress } from '@shared/utils/validate-form-fields.util';
 import { callForgotPasswordApiEndpoint } from '@modules/authentication/data/data-sources/authentication-api.data-source';
+import { APP_ROUTES, replaceRoute } from '@shared/navigation/app-routes';
+import { createLogger } from '@shared/logger/logger';
 import { buildForgotPasswordStyles } from '@screen-styles/public/forgot-password.styles';
 
-export default function ForgotPasswordPage() {
+const logger = createLogger('ForgotPassword');
+
+export default function ForgotPasswordPage(): React.JSX.Element {
   const { theme } = useTheme();
-  const router    = useRouter();
-  const styles    = buildForgotPasswordStyles(theme);
+  const styles    = useMemo(() => buildForgotPasswordStyles(theme), [theme]);
 
   const [emailInput,              setEmailInput]              = useState('');
   const [emailError,              setEmailError]              = useState<string | null>(null);
@@ -31,9 +33,11 @@ export default function ForgotPasswordPage() {
     setIsSubmitting(true);
     try {
       await callForgotPasswordApiEndpoint(emailInput.trim().toLowerCase());
-    } catch {
+    } catch (error) {
       // SECURITY: always show the success screen regardless of the outcome.
       // This prevents an attacker from learning which emails are registered.
+      // We still log the error in dev for diagnostics.
+      logger.warn('forgot-password call failed (silenced for security)', error);
     } finally {
       setIsSubmitting(false);
       setHasSubmittedSuccessfully(true);
@@ -95,7 +99,10 @@ export default function ForgotPasswordPage() {
 
             <View style={styles.backToLoginRow}>
               <Text style={styles.backToLoginText}>Tu te souviens ?</Text>
-              <TouchableOpacity onPress={() => router.replace('/(public)/login' as never)}>
+              <TouchableOpacity
+                onPress={() => replaceRoute(APP_ROUTES.public.login)}
+                accessibilityRole="link"
+              >
                 <Text style={styles.backToLoginAccent}>Se connecter</Text>
               </TouchableOpacity>
             </View>

@@ -1,8 +1,10 @@
-import React, { useCallback, useMemo, useState } from 'react';
-import { Alert } from 'react-native';
-import { View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
+import React, { memo, useCallback, useMemo, useState } from 'react';
+import {
+  View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator,
+  RefreshControl, Alert,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import { useTheme } from '@shared/theme/theme-provider';
 import { AppAvatar } from '@shared/components/app-avatar/app-avatar';
 import { useAuthenticationStore } from '@stores/authentication-store';
@@ -10,15 +12,19 @@ import { openOrCreateConversationBetweenTwoUsers } from '@core/stream-chat/strea
 import { usePlatformStats } from '@modules/search/presentation/hooks/use-platform-stats.hook';
 import { useAthleteSearch } from '@modules/search/presentation/hooks/use-athlete-search.hook';
 import type { AthleteSearchResultEntity } from '@modules/search/domain/entities/athlete-search-result.entity';
+import { APP_ROUTES, pushRoute } from '@shared/navigation/app-routes';
+import { createLogger } from '@shared/logger/logger';
 import { buildCoachSearchStyles } from '@screen-styles/coach/search.styles';
 
-export default function CoachSearchPage() {
+const logger = createLogger('CoachSearch');
+
+export default function CoachSearchPage(): React.JSX.Element {
+  const { t }         = useTranslation();
   const { theme }     = useTheme();
-  const router        = useRouter();
-  const styles        = buildCoachSearchStyles(theme);
+  const styles        = useMemo(() => buildCoachSearchStyles(theme), [theme]);
   const currentUserId = useAuthenticationStore((s) => s.loggedInUser?.id ?? '');
 
-  const { stats }                          = usePlatformStats();
+  const { stats }                                 = usePlatformStats();
   const { athletes, isLoading, hasError, reload } = useAthleteSearch();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -26,14 +32,12 @@ export default function CoachSearchPage() {
 
   // Local search filter — name only
   const visibleAthletes = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return athletes;
-    return athletes.filter((a) =>
-      a.fullName.toLowerCase().includes(q),
-    );
+    const trimmedQuery = searchQuery.trim().toLowerCase();
+    if (!trimmedQuery) return athletes;
+    return athletes.filter((a) => a.fullName.toLowerCase().includes(trimmedQuery));
   }, [athletes, searchQuery]);
 
-  const handleContactAthlete = useCallback(async (athlete: AthleteSearchResultEntity) => {
+  const handleContactAthlete = useCallback(async (athlete: AthleteSearchResultEntity): Promise<void> => {
     if (!currentUserId || openingConversationForAthleteId) return;
     setOpeningConversationForAthleteId(athlete.id);
     try {
@@ -41,44 +45,47 @@ export default function CoachSearchPage() {
 
       if (!channel.id) throw new Error('channel id missing');
 
-      router.push({
-        pathname: '/(private)/chat/[conversation-id]' as never,
+      pushRoute({
+        pathname: APP_ROUTES.private.chatConversation,
         params: {
           'conversation-id': channel.id,
           participantName:   athlete.fullName,
           participantPhoto:  athlete.profilePhotoUrl ?? '',
         },
-      } as never);
-    } catch {
+      });
+    } catch (contactError) {
+      logger.warn('Cannot open conversation with athlete', contactError);
       Alert.alert(
-        'Connexion impossible',
-        'Impossible d\'ouvrir la conversation. Vérifie ta connexion et réessaie.',
-        [{ text: 'OK' }],
+        t('errors.network'),
+        t('errors.unknown'),
+        [{ text: t('common.confirm') }],
       );
     } finally {
       setOpeningConversationForAthleteId(null);
     }
-  }, [currentUserId, openingConversationForAthleteId, router]);
+  }, [currentUserId, openingConversationForAthleteId, t]);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
 
       {/* ─── Tall blue header ──────────────────────────────────────────── */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Trouve ton Athlète</Text>
-        <Text style={styles.headerSubtitle}>Les meilleurs athlètes à coacher 🇫🇷</Text>
+        <Text style={styles.headerTitle}>{t('search.athleteSearchTitle')}</Text>
+        <Text style={styles.headerSubtitle}>{t('search.athleteSearchSubtitle')}</Text>
 
         {/* Search bar */}
         <View style={styles.searchBar}>
           <Text style={styles.searchIcon}>🔍</Text>
           <TextInput
             style={styles.searchInput}
-            placeholder="Rechercher un athlète..."
-            placeholderTextColor="#9CA3AF"
+            placeholder={t('search.searchAthletesPlaceholder')}
+            placeholderTextColor={theme.colors.textDisabled}
             value={searchQuery}
             onChangeText={setSearchQuery}
             autoCorrect={false}
             autoCapitalize="none"
+            returnKeyType="search"
+            accessibilityLabel={t('search.searchAthletesPlaceholder')}
           />
         </View>
 
@@ -86,15 +93,15 @@ export default function CoachSearchPage() {
         <View style={styles.statsRow}>
           <View style={styles.statCard}>
             <Text style={styles.statValue}>{stats ? String(stats.athleteCount) : '—'}</Text>
-            <Text style={styles.statLabel}>Athlètes</Text>
+            <Text style={styles.statLabel}>{t('search.statAthleteCount')}</Text>
           </View>
           <View style={styles.statCard}>
             <Text style={styles.statValue}>4.8</Text>
-            <Text style={styles.statLabel}>Note moy.</Text>
+            <Text style={styles.statLabel}>{t('search.statRating')}</Text>
           </View>
           <View style={styles.statCard}>
             <Text style={styles.statValue}>{stats ? String(stats.coachCount) : '—'}</Text>
-            <Text style={styles.statLabel}>Coachs</Text>
+            <Text style={styles.statLabel}>{t('search.statCoachCount')}</Text>
           </View>
         </View>
       </View>
@@ -102,8 +109,9 @@ export default function CoachSearchPage() {
       {/* ─── Result list ─────────────────────────────────────────────── */}
       <ScrollView
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
         refreshControl={
-          <RefreshControl refreshing={isLoading} onRefresh={reload} />
+          <RefreshControl refreshing={isLoading} onRefresh={reload} tintColor={theme.colors.brandPrimary} />
         }
       >
         {/* Loading spinner */}
@@ -117,10 +125,8 @@ export default function CoachSearchPage() {
         {hasError && (
           <View style={styles.emptyStateContainer}>
             <Text style={styles.emptyStateEmoji}>⚠️</Text>
-            <Text style={styles.emptyStateTitle}>Erreur de chargement</Text>
-            <Text style={styles.emptyStateMessage}>
-              Impossible de charger les athlètes. Tire vers le bas pour réessayer.
-            </Text>
+            <Text style={styles.emptyStateTitle}>{t('errors.network')}</Text>
+            <Text style={styles.emptyStateMessage}>{t('common.retry')}</Text>
           </View>
         )}
 
@@ -128,15 +134,11 @@ export default function CoachSearchPage() {
         {!isLoading && !hasError && visibleAthletes.length === 0 && (
           <View style={styles.emptyStateContainer}>
             <Text style={styles.emptyStateEmoji}>🏃</Text>
-            <Text style={styles.emptyStateTitle}>
-              {searchQuery.trim().length > 0
-                ? 'Aucun athlète trouvé'
-                : 'Aucun athlète inscrit'}
-            </Text>
+            <Text style={styles.emptyStateTitle}>{t('search.noAthletesFound')}</Text>
             <Text style={styles.emptyStateMessage}>
               {searchQuery.trim().length > 0
-                ? 'Essaie une autre recherche.'
-                : 'Les athlètes apparaîtront ici dès qu\'ils créent un compte.'}
+                ? t('common.noResults')
+                : t('search.noAthletesFoundDesc')}
             </Text>
           </View>
         )}
@@ -162,17 +164,20 @@ export default function CoachSearchPage() {
 }
 
 // ─── Athlete result card ────────────────────────────────────────────────────
-function AthleteResultCard({
-  athlete,
-  styles,
-  isContacting,
-  onContact,
-}: {
+
+interface AthleteResultCardProps {
   athlete:      AthleteSearchResultEntity;
   styles:       ReturnType<typeof buildCoachSearchStyles>;
   isContacting: boolean;
   onContact:    (athlete: AthleteSearchResultEntity) => Promise<void>;
-}) {
+}
+
+const AthleteResultCard = memo(function AthleteResultCard({
+  athlete, styles, isContacting, onContact,
+}: AthleteResultCardProps): React.JSX.Element {
+  const { t }     = useTranslation();
+  const { theme } = useTheme();
+
   return (
     <View style={styles.athleteCard}>
       {/* Top row : avatar + identity */}
@@ -206,17 +211,22 @@ function AthleteResultCard({
       <View style={styles.bottomRow}>
         <View style={styles.bottomRowLeft} />
         <TouchableOpacity
-          style={[styles.contactButton, isContacting && { opacity: 0.7 }]}
+          style={[styles.contactButton, isContacting && contactDisabledStyle]}
           activeOpacity={0.7}
           disabled={isContacting}
           onPress={() => void onContact(athlete)}
+          accessibilityRole="button"
+          accessibilityLabel={`${t('search.contactButton')} ${athlete.fullName}`}
+          accessibilityState={{ disabled: isContacting }}
         >
           {isContacting
-            ? <ActivityIndicator size="small" color="#FFFFFF" />
-            : <Text style={styles.contactButtonLabel}>Contacter</Text>
+            ? <ActivityIndicator size="small" color={theme.colors.textOnPrimary} />
+            : <Text style={styles.contactButtonLabel}>{t('search.contactButton')}</Text>
           }
         </TouchableOpacity>
       </View>
     </View>
   );
-}
+});
+
+const contactDisabledStyle = { opacity: 0.7 } as const;

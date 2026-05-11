@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View, Text,
   KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { AppScreenWrapper } from '@shared/components/app-screen-wrapper/app-screen-wrapper';
 import { AppLogo } from '@shared/components/app-logo/app-logo';
 import { AppTextInput } from '@shared/components/app-text-input/app-text-input';
@@ -15,12 +15,12 @@ import {
   validateThatPasswordsMatch,
 } from '@shared/utils/validate-form-fields.util';
 import { callResetPasswordApiEndpoint } from '@modules/authentication/data/data-sources/authentication-api.data-source';
+import { APP_ROUTES, replaceRoute } from '@shared/navigation/app-routes';
 import { buildResetPasswordStyles } from '@screen-styles/public/reset-password.styles';
 
-export default function ResetPasswordPage() {
+export default function ResetPasswordPage(): React.JSX.Element {
   const { theme } = useTheme();
-  const router    = useRouter();
-  const styles    = buildResetPasswordStyles(theme);
+  const styles    = useMemo(() => buildResetPasswordStyles(theme), [theme]);
 
   // The token arrives as a URL param when the user taps the deep link in the email:
   // slforce://reset-password?token=<hex>
@@ -53,7 +53,7 @@ export default function ResetPasswordPage() {
     try {
       await callResetPasswordApiEndpoint(token, newPasswordInput);
       // Success → back to login. replace() so the user can't navigate back here.
-      router.replace('/(public)/login' as never);
+      replaceRoute(APP_ROUTES.public.login);
     } catch {
       setErrorMessage('Le lien a expiré ou est invalide. Demande un nouveau lien de réinitialisation.');
     } finally {

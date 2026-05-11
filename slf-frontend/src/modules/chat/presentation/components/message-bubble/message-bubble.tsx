@@ -112,10 +112,12 @@ export const MessageBubble = memo(function MessageBubble({
               delayLongPress={400}
             >
               {downloadingId === att.id ? (
+                // ActivityIndicator n'accepte pas le style texte (`fontSize: 24`)
+                // → on rend juste un spinner sans wrapper, l'alignement reste OK
+                // grâce au flex container parent.
                 <ActivityIndicator
                   size="small"
-                  color={theme.colors.primary}
-                  style={styles.fileIcon}
+                  color={theme.colors.brandPrimary}
                 />
               ) : (
                 <Text style={styles.fileIcon}>📄</Text>

@@ -2,7 +2,8 @@
 // Convention: screens inside src/modules/*  → styles in src/modules/*/presentation/styles/
 //             screens inside app/ (Expo Router) → styles in src/screen-styles/
 import { StyleSheet } from 'react-native';
-import type { AppTheme } from '@shared/theme/theme-provider';
+import { COLORS } from '@shared/design-system';
+import type { AppTheme } from '@shared/theme/theme.types';
 
 export function buildMakePaymentStyles(theme: AppTheme) {
   return StyleSheet.create({
@@ -154,13 +155,16 @@ export function buildMakePaymentStyles(theme: AppTheme) {
     },
 
     // ─── Error banner ──────────────────────────────────────────────────────
+    // Couleurs centralisées dans le DS (`semantic.dangerLight/Light/Dark`)
+    // pour rester en phase avec le theming si on bascule vers un mode dark
+    // ou un rebrand.
     errorBanner: {
       flexDirection:   'row',
       alignItems:      'center',
-      backgroundColor: '#FEF2F2',
+      backgroundColor: COLORS.subtle.red,                // ex-#FEF2F2
       borderRadius:    12,
       borderWidth:     1,
-      borderColor:     '#FECACA',
+      borderColor:     COLORS.semantic.dangerLight,      // ex-#FECACA
       padding:         14,
       gap:             10,
     },
@@ -168,17 +172,17 @@ export function buildMakePaymentStyles(theme: AppTheme) {
     errorBannerTitle: {
       fontSize:     13,
       fontWeight:   '700',
-      color:        '#B91C1C',
+      color:        COLORS.semantic.dangerDark,          // ex-#B91C1C
       marginBottom: 2,
     },
     errorBannerText: {
       fontSize:   12,
-      color:      '#DC2626',
+      color:      COLORS.semantic.danger,                // ex-#DC2626
       lineHeight: 17,
     },
     errorBannerDismiss: {
       fontSize: 14,
-      color:    '#B91C1C',
+      color:    COLORS.semantic.dangerDark,
       padding:  4,
     },
 

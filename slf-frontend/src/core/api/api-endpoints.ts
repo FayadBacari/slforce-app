@@ -54,12 +54,9 @@ export const API_ENDPOINTS = {
     bankAccountDashboard:                '/payments/bank-account/dashboard',
   },
 
-  // TODO: Backend not yet implemented — NestJS module + controller needed.
-  // Do NOT use these endpoints until the backend is ready.
-  pushNotifications: {
-    registerDevicePushToken:   '/notifications/push-token',
-    unregisterDevicePushToken: '/notifications/push-token',
-  },
+  // NOTE: les endpoints push notifications ont été retirés en attendant que
+  // le module NestJS backend soit implémenté. Quand le backend sera prêt, les
+  // ré-introduire ici plutôt que de les recoder en dur dans les hooks.
 
   health: '/health',
 } as const;

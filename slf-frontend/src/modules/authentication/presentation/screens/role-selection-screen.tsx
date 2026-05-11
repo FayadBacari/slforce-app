@@ -1,24 +1,27 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
-import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '@shared/theme/theme-provider';
 import { AppScreenWrapper } from '@shared/components/app-screen-wrapper/app-screen-wrapper';
 import { AppLogo } from '@shared/components/app-logo/app-logo';
+import { APP_ROUTES, pushRoute } from '@shared/navigation/app-routes';
 import { buildRoleSelectionScreenStyles } from '../styles/role-selection-screen.styles';
 
-export function RoleSelectionScreen() {
-  const { t } = useTranslation();
+export function RoleSelectionScreen(): React.JSX.Element {
+  const { t }     = useTranslation();
   const { theme } = useTheme();
-  const router = useRouter();
-  const styles = buildRoleSelectionScreenStyles(theme);
+  const styles    = useMemo(() => buildRoleSelectionScreenStyles(theme), [theme]);
 
-  function navigateToAthleteRegistration() {
-    router.push('/(public)/register-athlete' as never);
+  function navigateToAthleteRegistration(): void {
+    pushRoute(APP_ROUTES.public.registerAthlete);
   }
 
-  function navigateToCoachRegistration() {
-    router.push('/(public)/register-coach' as never);
+  function navigateToCoachRegistration(): void {
+    pushRoute(APP_ROUTES.public.registerCoach);
+  }
+
+  function navigateToLogin(): void {
+    pushRoute(APP_ROUTES.public.login);
   }
 
   return (
@@ -39,6 +42,9 @@ export function RoleSelectionScreen() {
             style={styles.roleCard}
             onPress={navigateToAthleteRegistration}
             activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={t('auth.roleAthlete')}
+            accessibilityHint={t('auth.roleAthleteDesc')}
           >
             <Text style={styles.roleEmoji}>🏃</Text>
             <Text style={styles.roleTitle}>{t('auth.roleAthlete')}</Text>
@@ -50,6 +56,9 @@ export function RoleSelectionScreen() {
             style={styles.roleCard}
             onPress={navigateToCoachRegistration}
             activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={t('auth.roleCoach')}
+            accessibilityHint={t('auth.roleCoachDesc')}
           >
             <Text style={styles.roleEmoji}>🏋️</Text>
             <Text style={styles.roleTitle}>{t('auth.roleCoach')}</Text>
@@ -59,7 +68,9 @@ export function RoleSelectionScreen() {
 
         <TouchableOpacity
           style={styles.loginLink}
-          onPress={() => router.push('/(public)/login' as never)}
+          onPress={navigateToLogin}
+          accessibilityRole="link"
+          accessibilityLabel={t('auth.login')}
         >
           <Text style={styles.loginLinkText}>
             {t('auth.alreadyHaveAccount')}{' '}

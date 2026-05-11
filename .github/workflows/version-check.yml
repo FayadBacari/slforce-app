@@ -1,0 +1,58 @@
+name: Version Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "GitHub environment to use for expected versions"
+        required: true
+        default: "development"
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  check-frontend-backend-versions:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'development' }}
+    env:
+      EXPECTED_FRONTEND_VERSION: ${{ vars.FRONTEND_VERSION }}
+      EXPECTED_BACKEND_VERSION: ${{ vars.BACKEND_VERSION }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify frontend and backend versions
+        run: |
+          node -e "
+          const fs = require('fs');
+          const frontend = JSON.parse(fs.readFileSync('slf-frontend/package.json', 'utf8')).version;
+          const backend = JSON.parse(fs.readFileSync('slf-backend/package.json', 'utf8')).version;
+          const expectedFrontend = process.env.EXPECTED_FRONTEND_VERSION;
+          const expectedBackend = process.env.EXPECTED_BACKEND_VERSION;
+
+          if (!expectedFrontend || !expectedBackend) {
+            console.error('Missing environment variables: FRONTEND_VERSION and/or BACKEND_VERSION.');
+            process.exit(1);
+          }
+
+          if (frontend !== expectedFrontend) {
+            console.error('Frontend version mismatch:', { expected: expectedFrontend, actual: frontend });
+            process.exit(1);
+          }
+
+          if (backend !== expectedBackend) {
+            console.error('Backend version mismatch:', { expected: expectedBackend, actual: backend });
+            process.exit(1);
+          }
+
+          console.log('Version check passed.');
+          console.log('frontend:', frontend);
+          console.log('backend:', backend);
+          "

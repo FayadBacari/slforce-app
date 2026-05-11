@@ -41,9 +41,3 @@ export function formatMonthAndYearInFrench(date: Date): string {
     year: 'numeric',
   });
 }
-
-// Converts a raw date string or timestamp to a Date object safely
-export function parseDateSafely(rawDate: string | number | Date): Date {
-  if (rawDate instanceof Date) return rawDate;
-  return new Date(rawDate);
-}

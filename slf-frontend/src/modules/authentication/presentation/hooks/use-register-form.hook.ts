@@ -1,5 +1,4 @@
 import { useState, useCallback } from 'react';
-import { useRouter } from 'expo-router';
 import { usePendingRegistrationStore } from '@stores/pending-registration-store';
 import { convertAnyErrorToAppError } from '@core/api/api-error-handler';
 import {
@@ -8,12 +7,12 @@ import {
   validateThatPasswordsMatch,
   validateThatFieldIsNotEmpty,
 } from '@shared/utils/validate-form-fields.util';
+import { APP_ROUTES, pushRoute } from '@shared/navigation/app-routes';
 import type { UserRole } from '@shared/types/user.types';
 
 // Validates account info (step 0) and navigates to the multi-step onboarding.
 // Does NOT call the API — the onboarding hook handles the final registration.
 export function useRegisterForm(role: UserRole) {
-  const router = useRouter();
   const savePendingAccountData = usePendingRegistrationStore(
     (s) => s.savePendingAccountData,
   );
@@ -71,12 +70,11 @@ export function useRegisterForm(role: UserRole) {
         role,
       });
 
-      const onboardingRoute =
-        role === 'coach'
-          ? '/(public)/register-coach-onboarding'
-          : '/(public)/register-athlete-onboarding';
+      const onboardingRoute = role === 'coach'
+        ? APP_ROUTES.public.registerCoachOnboarding
+        : APP_ROUTES.public.registerAthleteOnboarding;
 
-      router.push(onboardingRoute as never);
+      pushRoute(onboardingRoute);
     } catch (unknownError) {
       const appError = convertAnyErrorToAppError(unknownError);
       setErrorMessage(appError.userFriendlyMessage);
@@ -85,7 +83,7 @@ export function useRegisterForm(role: UserRole) {
     }
   }, [
     firstNameInput, lastNameInput, emailInput, passwordInput,
-    validateAllFormFields, savePendingAccountData, router, role,
+    validateAllFormFields, savePendingAccountData, role,
   ]);
 
   return {

@@ -1,29 +1,31 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Animated } from 'react-native';
-import { useRouter } from 'expo-router';
 import { useAuthenticationStore } from '@stores/authentication-store';
 import { usePendingRegistrationStore } from '@stores/pending-registration-store';
 import { useAthleteProfileStore } from '@stores/athlete-profile-store';
 import { authenticationRepository } from '../../data/repositories/authentication.repository';
 import { convertAnyErrorToAppError } from '@core/api/api-error-handler';
 import { connectCurrentUserToStreamChat } from '@core/stream-chat/stream-chat-client';
-import { apiClient } from '@core/api/api-client';
-import { API_ENDPOINTS } from '@core/api/api-endpoints';
-import { unwrapBackendEnvelope, type BackendSuccessEnvelope } from '@core/api/api-response-envelope';
+import { callGetStreamChatTokenApiEndpoint } from '@modules/chat/data/data-sources/chat-token-api.data-source';
+import { APP_ROUTES, replaceRoute } from '@shared/navigation/app-routes';
+import { ONBOARDING_FADE_DURATION_MS } from '@shared/constants/app-constants';
+import { createLogger } from '@shared/logger/logger';
+import { MALE_WEIGHT_CATEGORIES, FEMALE_WEIGHT_CATEGORIES } from '@modules/users/domain/constants/weight-categories';
 import type { AthleteProfileData } from '../../domain/entities/user.entity';
 
-const FADE_DURATION_MS = 120;
-const TOTAL_STEPS = 9;
+const logger = createLogger('RegisterAthleteOnboarding');
 
-export const MALE_WEIGHT_CATEGORIES   = ['-66', '-73', '-80', '-87', '-94', '-104', '+104'];
-export const FEMALE_WEIGHT_CATEGORIES = ['-52', '-63', '-70', '+70'];
+const TOTAL_STEPS = 9;
 
 function filterNumericInput(text: string): string {
   return text.replace(/[^0-9.]/g, '');
 }
 
+// Re-export pour ne pas casser les écrans qui importent depuis ce hook.
+// La source de vérité est maintenant @modules/users/domain/constants/.
+export { MALE_WEIGHT_CATEGORIES, FEMALE_WEIGHT_CATEGORIES };
+
 export function useRegisterAthleteOnboarding() {
-  const router             = useRouter();
   const saveLoginData      = useAuthenticationStore((s) => s.saveLoginDataAfterSuccessfulLogin);
   const pendingAccount     = usePendingRegistrationStore((s) => s.pendingAccount);
   const clearPending       = usePendingRegistrationStore((s) => s.clearPendingAccountData);
@@ -51,8 +53,8 @@ export function useRegisterAthleteOnboarding() {
   // ── Animation between steps ─────────────────────────────────────────────────
   const animateStep = useCallback((callback: () => void) => {
     Animated.sequence([
-      Animated.timing(fadeAnim, { toValue: 0, duration: FADE_DURATION_MS, useNativeDriver: true }),
-      Animated.timing(fadeAnim, { toValue: 1, duration: FADE_DURATION_MS, useNativeDriver: true }),
+      Animated.timing(fadeAnim, { toValue: 0, duration: ONBOARDING_FADE_DURATION_MS, useNativeDriver: true }),
+      Animated.timing(fadeAnim, { toValue: 1, duration: ONBOARDING_FADE_DURATION_MS, useNativeDriver: true }),
     ]).start();
     callback();
   }, [fadeAnim]);
@@ -109,30 +111,28 @@ export function useRegisterAthleteOnboarding() {
         refreshToken: authResult.refreshToken,
       });
 
-      // Connect to Stream Chat — token is obtainable now that the JWT is saved
+      // Connect to Stream Chat — token is obtainable now that the JWT is saved.
+      // Best-effort : un échec ici ne doit JAMAIS bloquer l'inscription.
       try {
-        const streamTokenResponse = await apiClient.get<BackendSuccessEnvelope<{ token: string }>>(
-          API_ENDPOINTS.chat.getStreamChatToken,
-        );
-        const { token: streamToken } = unwrapBackendEnvelope(streamTokenResponse);
+        const streamToken = await callGetStreamChatTokenApiEndpoint();
         await connectCurrentUserToStreamChat(
           authResult.user.id,
           `${authResult.user.firstName} ${authResult.user.lastName}`,
           authResult.user.profilePhotoUrl,
           streamToken,
         );
-      } catch {
-        // Chat failing must never block registration
+      } catch (chatConnectError) {
+        logger.warn('Stream Chat connection failed during registration (non-fatal)', chatConnectError);
       }
 
-      router.replace('/(private)/(athlete)/profile' as never);
+      replaceRoute(APP_ROUTES.private.athleteProfile);
     } catch (unknownError) {
       const appError = convertAnyErrorToAppError(unknownError);
       setErrorMessage(appError.userFriendlyMessage);
     } finally {
       setLoading(false);
     }
-  }, [pendingAccount, profileData, hydrateAthleteProfile, clearPending, saveLoginData, router]);
+  }, [pendingAccount, profileData, hydrateAthleteProfile, clearPending, saveLoginData]);
 
   // ── canProceed per step ──────────────────────────────────────────────────────
   const canProceed = useMemo(() => {

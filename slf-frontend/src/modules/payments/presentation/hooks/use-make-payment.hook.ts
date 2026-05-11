@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from 'react';
 import { useStripe } from '@stripe/stripe-react-native';
 import { paymentsRepository } from '../../data/repositories/payments.repository';
 import { convertAnyErrorToAppError } from '@core/api/api-error-handler';
+import { STRIPE_PAYMENT_CANCELED_CODE } from '@shared/constants/app-constants';
 
 // ─── Status union ─────────────────────────────────────────────────────────────
 export type PaymentStatus = 'idle' | 'loading' | 'success' | 'cancelled' | 'error';
@@ -84,8 +85,9 @@ export function useMakePayment() {
       const { error: presentError } = await presentPaymentSheet();
 
       if (presentError) {
-        // 'Canceled' means the user dismissed the sheet — silent, not an error.
-        if (presentError.code === 'Canceled') {
+        // STRIPE_PAYMENT_CANCELED_CODE means the user dismissed the sheet —
+        // silent, ne sera jamais traité comme une erreur.
+        if (presentError.code === STRIPE_PAYMENT_CANCELED_CODE) {
           setStatus('cancelled');
         } else {
           setErrorMessage(presentError.message);
