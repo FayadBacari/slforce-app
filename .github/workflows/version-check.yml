@@ -36,10 +36,11 @@ jobs:
           const backend = JSON.parse(fs.readFileSync('slf-backend/package.json', 'utf8')).version;
           const expectedFrontend = process.env.EXPECTED_FRONTEND_VERSION;
           const expectedBackend = process.env.EXPECTED_BACKEND_VERSION;
-
+ 
           if (!expectedFrontend || !expectedBackend) {
-            console.error('Missing environment variables: FRONTEND_VERSION and/or BACKEND_VERSION.');
-            process.exit(1);
+            console.warn('FRONTEND_VERSION and/or BACKEND_VERSION are not set for this environment. Comparison skipped.');
+            console.log('Detected versions -> frontend:', frontend, '| backend:', backend);
+            process.exit(0);
           }
 
           if (frontend !== expectedFrontend) {
@@ -56,3 +57,45 @@ jobs:
           console.log('frontend:', frontend);
           console.log('backend:', backend);
           "
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: slf-frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: slf-frontend
+        run: npm ci
+
+      - name: Test frontend
+        working-directory: slf-frontend
+        run: npm run ci
+
+  test-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: slf-backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: slf-backend
+        run: npm ci
+
+      - name: Test backend
+        working-directory: slf-backend
+        run: npm run test
