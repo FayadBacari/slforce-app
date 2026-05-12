@@ -48,3 +48,16 @@ export class Payment {
 }
 
 export const PaymentSchema = SchemaFactory.createForClass(Payment);
+
+// ─── Compound indexes ──────────────────────────────────────────────────────────
+//
+// Sans cet index, `findPaymentsReceivedByUser` + `getReceivedTotalsForCoach`
+// font un full collection scan filtré ensuite en RAM. Avec, Mongo exploite
+// directement l'index pour le filtre `receiverId + status` puis trie par
+// `createdAt` (champ de tri en dernier dans la composition).
+
+// 1. Liste des paiements reçus par un coach, triés par date desc.
+PaymentSchema.index({ receiverId: 1, status: 1, createdAt: -1 });
+
+// 2. Liste des paiements envoyés par un athlète, triés par date desc.
+PaymentSchema.index({ senderId: 1, createdAt: -1 });

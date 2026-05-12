@@ -9,7 +9,7 @@ import type { AthleteSearchResultEntity } from '../../domain/entities/athlete-se
 
 export async function callGetPlatformStatsApiEndpoint(): Promise<PlatformStatsEntity> {
   const response = await apiClient.get<BackendSuccessEnvelope<PlatformStatsEntity>>(
-    API_ENDPOINTS.userProfile.platformStats,
+    API_ENDPOINTS.platform.stats,
   );
   return unwrapBackendEnvelope(response);
 }

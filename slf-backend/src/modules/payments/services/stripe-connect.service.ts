@@ -38,7 +38,18 @@ export class StripeConnectService {
 
   constructor(private readonly configService: ConfigService) {
     const secretKey = this.configService.getOrThrow<string>('STRIPE_SECRET_KEY');
-    this.stripe = new Stripe(secretKey);
+    // ─── Config Stripe SDK ──────────────────────────────────────────────────
+    //
+    // • timeout = 10s : si l'API Stripe est lente (incident), nos requêtes ne
+    //   bloquent pas indéfiniment notre pool Express. 10s = compromis entre
+    //   "donner sa chance à Stripe" et "couper avant de saturer".
+    // • maxNetworkRetries = 2 : le SDK Stripe retry automatiquement les
+    //   erreurs réseau (5xx, timeouts) avec idempotency-key géré en interne.
+    //   2 retries = jusqu'à ~3 appels par opération, encore raisonnable.
+    this.stripe = new Stripe(secretKey, {
+      timeout:            10_000,
+      maxNetworkRetries:  2,
+    });
 
     // Use the typed config namespace so values are always resolved through the
     // same Joi-validated layer — no raw process.env bypasses.

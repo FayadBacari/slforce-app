@@ -10,6 +10,7 @@ import {
   callDisconnectBankAccountApiEndpoint,
   callInitiatePaymentApiEndpoint,
   callConfirmPaymentApiEndpoint,
+  type ConfirmPaymentResult,
 } from '../data-sources/payments-api.data-source';
 
 class PaymentsRepository {
@@ -57,7 +58,12 @@ class PaymentsRepository {
 
   // Confirms a successful payment on the backend.
   // The backend re-retrieves the intent from Stripe and writes the record to MongoDB.
-  async confirmPayment(paymentIntentId: string): Promise<void> {
+  //
+  // Renvoie désormais `{ paymentId, wasNewlyRecorded }` au lieu de `void` :
+  //   • `paymentId` permet à l'UI mobile de naviguer vers le détail du paiement.
+  //   • `wasNewlyRecorded` distingue le cas "webhook a déjà enregistré avant
+  //     l'appel /confirm" — utile pour ajuster le toast affiché à l'utilisateur.
+  async confirmPayment(paymentIntentId: string): Promise<ConfirmPaymentResult> {
     return callConfirmPaymentApiEndpoint(paymentIntentId);
   }
 }

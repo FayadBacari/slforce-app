@@ -71,8 +71,15 @@ export class AuthController {
   }
 
   // POST /api/v1/auth/logout
-  // Public pour permettre le logout même avec un access token expiré.
+  // Public pour permettre le logout même avec un access token expiré, MAIS
+  // throttle agressif identique aux autres routes auth : empêche un attaquant
+  // qui aurait scrappé un lot de refresh tokens (logs, cache compromis...)
+  // de spammer `/logout` pour DoS toutes les sessions actives.
+  //
+  // La vérification de signature côté service garantit que seul un refresh
+  // token réellement signé par notre backend peut révoquer son hash en DB.
   @Public()
+  @Throttle(STRICT_AUTH_THROTTLE)
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
   async logoutUser(@Body() body: RefreshTokenRequestDto): Promise<void> {

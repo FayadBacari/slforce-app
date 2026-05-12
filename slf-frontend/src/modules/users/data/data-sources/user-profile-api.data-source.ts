@@ -7,6 +7,7 @@
 import { apiClient } from '@core/api/api-client';
 import { API_ENDPOINTS } from '@core/api/api-endpoints';
 import { unwrapBackendEnvelope, type BackendSuccessEnvelope } from '@core/api/api-response-envelope';
+import { API_UPLOAD_TIMEOUT_MS } from '@shared/constants/app-constants';
 import type { PrivacySettingsEntity } from '../../domain/entities/privacy-settings.entity';
 
 // ─── Shared profile shape (backend DTO at the wire level) ────────────────────
@@ -80,4 +81,52 @@ export async function callUpdatePrivacySettingsApiEndpoint(
     patch,
   );
   return unwrapBackendEnvelope(response);
+}
+
+// ─── POST /users/profile/photo ────────────────────────────────────────────────
+//
+// Upload multipart d'une photo de profil. Le backend stocke le buffer sur
+// Cloudinary et renvoie l'URL HTTPS finale.
+//
+// Auparavant, cet endpoint n'avait pas de data-source : les screens
+// appelaient `apiClient` directement — violation de la frontière HTTP
+// (cf. audit #21). Maintenant centralisé ici.
+//
+// Timeout custom (60s) — un upload 5MB sur 3G peut prendre 25-30s
+// légitimement. React Native ajoute automatiquement la boundary multipart
+// quand on passe Content-Type 'multipart/form-data' — ne PAS overrider en JSON.
+
+export interface UploadProfilePhotoFile {
+  uri:      string;
+  name:     string;
+  mimeType: string;
+}
+
+interface UploadProfilePhotoResponse {
+  photoUrl: string;
+}
+
+export async function callUploadProfilePhotoApiEndpoint(
+  file: UploadProfilePhotoFile,
+): Promise<string> {
+  const formData = new FormData();
+
+  // React Native attend cet objet exact pour reconnaître un File dans FormData.
+  // Le `as unknown as Blob` est nécessaire car le typage standard de FormData
+  // est web-first (Blob) alors que RN accepte ce shape `{ uri, name, type }`.
+  formData.append('photo', {
+    uri:  file.uri,
+    name: file.name,
+    type: file.mimeType,
+  } as unknown as Blob);
+
+  const httpResponse = await apiClient.post<BackendSuccessEnvelope<UploadProfilePhotoResponse>>(
+    API_ENDPOINTS.userProfile.uploadProfilePhoto,
+    formData,
+    {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: API_UPLOAD_TIMEOUT_MS,
+    },
+  );
+  return unwrapBackendEnvelope(httpResponse).photoUrl;
 }

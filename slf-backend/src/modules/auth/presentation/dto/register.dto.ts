@@ -3,6 +3,7 @@ import {
   IsEnum,
   IsNotEmpty,
   IsString,
+  Matches,
   MinLength,
   IsOptional,
   IsArray,
@@ -12,6 +13,23 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { UserRole } from '@shared/types/user-role.enum';
+
+// ─── PASSWORD_STRENGTH_PATTERN ────────────────────────────────────────────────
+//
+// Exigences MINIMALES pour un nouveau mot de passe :
+//   • 8 caractères ou plus
+//   • au moins une lettre majuscule
+//   • au moins un chiffre
+//
+// Ce pattern correspond exactement à `validatePassword` côté frontend
+// (`@shared/utils/validate-form-fields.util.ts`) — toute divergence entre les
+// deux régresserait l'UX (frontend laisse passer puis backend rejette).
+//
+// On exporte le pattern et le message pour les réutiliser à l'identique dans
+// reset-password.dto.ts.
+export const PASSWORD_STRENGTH_PATTERN = /^(?=.*[A-Z])(?=.*\d).{8,}$/;
+export const PASSWORD_STRENGTH_MESSAGE =
+  'Le mot de passe doit contenir au moins 8 caractères, une majuscule et un chiffre.';
 
 // ── Nested DTO: personal records (athlete) ────────────────────────────────────
 // Numeric values are sent as strings from the mobile form — @Type(() => Number)
@@ -103,6 +121,7 @@ export class RegisterRequestDto {
 
   @IsString()
   @MinLength(8, { message: 'Le mot de passe doit contenir au moins 8 caractères.' })
+  @Matches(PASSWORD_STRENGTH_PATTERN, { message: PASSWORD_STRENGTH_MESSAGE })
   password!: string;
 
   @IsString()

@@ -10,9 +10,41 @@
 
 // ── Réseau ──────────────────────────────────────────────────────────────────
 
-// Timeout des requêtes HTTP API SLForce. Suffisamment long pour les uploads
-// d'images, mais coupe les requêtes "perdues" dans le réseau mobile flaky.
-export const API_TIMEOUT_MS = 15_000;
+// Timeout par défaut des requêtes HTTP API SLForce. La majorité des GET et
+// POST classiques rentrent largement là-dedans ; les uploads ont leur propre
+// constante plus haute. Aligné avec le timeout côté serveur (~10s sur Stripe)
+// + une marge de 10s pour absorber la latence réseau mobile.
+export const API_DEFAULT_TIMEOUT_MS = 20_000;
+
+// Timeout dédié aux uploads multipart (photo de profil, attachments). Une
+// photo de 5 MB sur 3G prend facilement 20-25s — il faut une fenêtre large
+// sans bloquer indéfiniment.
+export const API_UPLOAD_TIMEOUT_MS = 60_000;
+
+// Timeout court pour les GETs "ping" (stats, liste search, profil) où la
+// latence est attendue < 2s. Réduit l'attente perçue quand le backend est down.
+export const API_FAST_GET_TIMEOUT_MS = 8_000;
+
+// Alias rétrocompat — ancienne constante consommée par certaines parties du
+// code. Pointe désormais sur le timeout par défaut.
+export const API_TIMEOUT_MS = API_DEFAULT_TIMEOUT_MS;
+
+// ── Retry policy ─────────────────────────────────────────────────────────────
+
+// Nombre MAXIMAL de tentatives pour les erreurs transitoires (network, 5xx,
+// timeout). 3 = première tentative + 2 retries.
+export const API_RETRY_MAX_ATTEMPTS = 3;
+
+// Délai initial avant retry (exponentiel × 2 à chaque tentative).
+// Séquence : 250ms, 500ms, 1000ms (timing aussi connu sous "binary backoff").
+export const API_RETRY_INITIAL_DELAY_MS = 250;
+
+// Status codes HTTP considérés comme transitoires et retryables.
+// On EXCLUT explicitement 401 (déjà géré par l'interceptor refresh) et tous
+// les 4xx (erreurs client, retry ne changera rien).
+export const API_RETRYABLE_STATUS_CODES: readonly number[] = [502, 503, 504];
+
+// ── Stream Chat ──────────────────────────────────────────────────────────────
 
 // Timeout du WebSocket Stream Chat — légèrement plus court car la reconnexion
 // est gérée par le SDK et ne devrait pas dépasser 6s sur 4G normale.
@@ -45,3 +77,21 @@ export const STRIPE_PAYMENT_CANCELED_CODE = 'Canceled';
 
 // Durée d'un fade in/out d'écran d'onboarding (athlete + coach utilisent la même).
 export const ONBOARDING_FADE_DURATION_MS = 120;
+
+// ── HTTP headers custom SLForce ─────────────────────────────────────────────
+
+// Identifiant unique par requête, propagé bout-en-bout pour faciliter le debug
+// (cf. AllExceptionsFilter côté backend qui le renvoie aussi dans la réponse).
+export const HTTP_HEADER_REQUEST_ID       = 'X-Request-Id';
+
+// Clé d'idempotence — sur les POST critiques (paiement, register), garantit
+// qu'un retry réseau ne crée pas deux fois la même ressource.
+export const HTTP_HEADER_IDEMPOTENCY_KEY  = 'X-Idempotency-Key';
+
+// Version applicative mobile (lue depuis app.json). Permet au backend de
+// rejeter les vieilles versions buguées avec un message explicite.
+export const HTTP_HEADER_APP_VERSION      = 'X-App-Version';
+
+// Plateforme cliente — 'ios' | 'android' | 'web'. Utile pour les metrics
+// et pour détecter les bugs spécifiques à une plateforme.
+export const HTTP_HEADER_APP_PLATFORM     = 'X-App-Platform';

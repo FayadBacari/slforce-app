@@ -6,8 +6,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Types } from 'mongoose';
-import { PaymentsRepository } from '../data/repositories/payments.repository';
+import {
+  PaymentsRepository,
+  type PaymentLean,
+  type PopulatedUserSummary,
+} from '../data/repositories/payments.repository';
 import { StripeConnectService, type StripeWebhookEvent } from './stripe-connect.service';
+import { StripeEventsRepository } from '../data/repositories/stripe-events.repository';
 import { UsersRepository } from '@modules/users/data/repositories/users.repository';
 import type {
   SentPaymentDto,
@@ -22,7 +27,10 @@ import type {
   OnboardingUrlResponseDto,
   DashboardUrlResponseDto,
 } from '../presentation/dto/bank-account-response.dto';
-import type { PaymentIntentResponseDto } from '../presentation/dto/payment-intent.dto';
+import type {
+  PaymentIntentResponseDto,
+  ConfirmPaymentResponseDto,
+} from '../presentation/dto/payment-intent.dto';
 import { ConfigService } from '@nestjs/config';
 
 // Abbreviated French month labels for the chart X-axis
@@ -32,38 +40,52 @@ const FRENCH_MONTH_LABELS = [
   'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc',
 ];
 
+// Helper de typage : narrow d'un champ populé sur PaymentLean.
+// `senderId` / `receiverId` sont `Types.ObjectId | PopulatedUserSummary` — selon
+// que la query a fait un `.populate()`. Quand on sait qu'on a populated, ce
+// helper donne accès aux champs user de façon type-safe.
+function asPopulatedUser(
+  field: Types.ObjectId | PopulatedUserSummary,
+): PopulatedUserSummary {
+  // Si le populate a échoué silencieusement (user supprimé puis populated),
+  // on a juste l'ObjectId. On renvoie un placeholder anonymisé plutôt que de
+  // throw — le paiement reste affiché mais signalé comme "compte supprimé".
+  if (field instanceof Types.ObjectId) {
+    return {
+      _id:       field,
+      firstName: 'Compte',
+      lastName:  'Supprimé',
+    };
+  }
+  return field;
+}
+
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
 
   constructor(
-    private readonly paymentsRepository:   PaymentsRepository,
-    private readonly stripeConnectService: StripeConnectService,
-    private readonly usersRepository:      UsersRepository,
-    private readonly configService:        ConfigService,
+    private readonly paymentsRepository:    PaymentsRepository,
+    private readonly stripeConnectService:  StripeConnectService,
+    private readonly stripeEventsRepository: StripeEventsRepository,
+    private readonly usersRepository:       UsersRepository,
+    private readonly configService:         ConfigService,
   ) {}
 
   // ─── GET /payments/sent (athlete) ──────────────────────────────────────────
   // Returns all payments sent by the current user, with the coach's name.
   async getPaymentsSentByCurrentUser(userId: string): Promise<PaymentHistoryResponseDto> {
-    const paymentDocuments = await this.paymentsRepository.findPaymentsSentByUser(userId);
+    const leanPayments = await this.paymentsRepository.findPaymentsSentByUser(userId);
 
-    const payments: SentPaymentDto[] = paymentDocuments.map((doc) => {
-      // receiverId is populated by Mongoose — cast to the populated shape
-      const coach = doc.receiverId as unknown as {
-        _id: Types.ObjectId;
-        firstName: string;
-        lastName: string;
-        profilePhotoUrl?: string;
-      };
-
+    const payments: SentPaymentDto[] = leanPayments.map((doc) => {
+      const coach = asPopulatedUser(doc.receiverId);
       return {
-        id:            (doc._id as Types.ObjectId).toString(),
+        id:            doc._id.toString(),
         coachName:     `${coach.firstName} ${coach.lastName}`,
         coachPhotoUrl: coach.profilePhotoUrl,
         amountInEuros: doc.amountInCents / 100,
         status:        doc.status,
-        date:          (doc.createdAt as Date).toISOString(),
+        date:          doc.createdAt.toISOString(),
         description:   doc.description,
       };
     });
@@ -72,44 +94,39 @@ export class PaymentsService {
   }
 
   // ─── GET /payments/received (coach) ────────────────────────────────────────
-  // Returns all payments received by the current user, with the athlete's name,
-  // plus total and current-month totals for the stats cards.
+  //
+  // Renvoie la liste des paiements reçus + totaux pour les cards de stats.
+  //
+  // Optimisation : les totaux sont calculés via une AGGREGATION Mongo
+  // (`paymentsRepository.getReceivedTotalsForCoach`) plutôt qu'en chargeant
+  // tous les paiements en RAM puis en faisant `.reduce()` côté Node. Pour un
+  // coach actif avec 5k paiements/mois, c'est la différence entre 5k docs
+  // chargés (~5 MB) et 2 nombres renvoyés (~24 octets).
   async getPaymentsReceivedByCurrentUser(userId: string): Promise<CoachPaymentsResponseDto> {
-    const paymentDocuments = await this.paymentsRepository.findPaymentsReceivedByUser(userId);
+    // 1. Charge en parallèle la liste pour l'affichage ET les totaux agrégés
+    const [leanPayments, totalsInCents] = await Promise.all([
+      this.paymentsRepository.findPaymentsReceivedByUser(userId),
+      this.paymentsRepository.getReceivedTotalsForCoach(userId),
+    ]);
 
-    const payments: ReceivedPaymentDto[] = paymentDocuments.map((doc) => {
-      const athlete = doc.senderId as unknown as {
-        _id: Types.ObjectId;
-        firstName: string;
-        lastName: string;
-        profilePhotoUrl?: string;
-      };
-
+    // 2. Projette les paiements vers le DTO HTTP
+    const payments: ReceivedPaymentDto[] = leanPayments.map((doc) => {
+      const athlete = asPopulatedUser(doc.senderId);
       return {
-        id:               (doc._id as Types.ObjectId).toString(),
+        id:               doc._id.toString(),
         athleteName:      `${athlete.firstName} ${athlete.lastName}`,
         athletePhotoUrl:  athlete.profilePhotoUrl,
         amountInEuros:    doc.amountInCents / 100,
         status:           doc.status,
-        date:             (doc.createdAt as Date).toISOString(),
+        date:             doc.createdAt.toISOString(),
       };
     });
 
-    // Compute totals on the server — avoids sending raw numbers to the client
-    const completedPayments = payments.filter((p) => p.status === 'completed');
-    const totalEarnings = completedPayments.reduce((sum, p) => sum + p.amountInEuros, 0);
-
-    const now   = new Date();
-    const month = now.getMonth();
-    const year  = now.getFullYear();
-    const thisMonth = completedPayments.reduce((sum, p) => {
-      const d = new Date(p.date);
-      return d.getMonth() === month && d.getFullYear() === year
-        ? sum + p.amountInEuros
-        : sum;
-    }, 0);
-
-    return { payments, totalEarnings, thisMonth };
+    return {
+      payments,
+      totalEarnings: totalsInCents.totalEarningsInCents / 100,
+      thisMonth:     totalsInCents.thisMonthInCents     / 100,
+    };
   }
 
   // ─── GET /payments/summary/monthly (coach) ─────────────────────────────────
@@ -270,7 +287,7 @@ export class PaymentsService {
   async confirmPayment(params: {
     athleteId:       string;
     paymentIntentId: string;
-  }): Promise<void> {
+  }): Promise<ConfirmPaymentResponseDto> {
     // 1. Retrieve the live PaymentIntent from Stripe (source of truth)
     const paymentIntent =
       await this.stripeConnectService.retrievePaymentIntent(params.paymentIntentId);
@@ -288,7 +305,30 @@ export class PaymentsService {
     }
 
     // 4. Persistance idempotente (logique partagée avec le webhook)
-    await this.persistSucceededPaymentIfNew(paymentIntent);
+    const { paymentId, wasNewlyRecorded } =
+      await this.persistSucceededPaymentIfNew(paymentIntent);
+
+    // 5. Si on n'a rien créé (webhook arrivé avant), on lookup l'ID existant
+    //    pour quand même renvoyer une valeur au mobile.
+    if (!paymentId) {
+      const existing = await this.paymentsRepository.findByStripePaymentIntentId(
+        paymentIntent.id,
+      );
+      // Garde-fou : l'upsert s'est forcément exécuté juste au-dessus, donc
+      // `existing` ne peut pas être null sauf bug — on throw plutôt que de
+      // renvoyer une réponse menteuse.
+      if (!existing) {
+        throw new BadRequestException(
+          'Paiement introuvable après upsert — anomalie, contacte le support.',
+        );
+      }
+      return {
+        paymentId:        existing._id.toString(),
+        wasNewlyRecorded: false,
+      };
+    }
+
+    return { paymentId, wasNewlyRecorded };
   }
 
   // ─── POST /payments/webhook (Stripe → backend) ─────────────────────────────
@@ -297,10 +337,30 @@ export class PaymentsService {
   // et POST /payments/confirm — sans webhook, le coach aurait l'argent mais
   // l'app ne verrait jamais le paiement en DB.
   //
-  // Le controller a déjà vérifié la signature ; ici on ne fait que dispatcher
-  // l'événement vers le bon handler. Le retour 200 est crucial pour que Stripe
-  // n'enchaîne pas les retries en cascade.
+  // DOUBLE COUCHE D'IDEMPOTENCE :
+  //   1. Au niveau EVENT : `stripeEventsRepository.markEventAsProcessedIfNew()`
+  //      garantit qu'un event Stripe répété (retry après timeout réseau) ne
+  //      sera traité qu'une seule fois. Indispensable dès qu'on ajoute d'autres
+  //      handlers que `payment_intent.succeeded` (refund, dispute...).
+  //   2. Au niveau PAYMENT : `upsertPaymentByStripePaymentIntentId` exploite
+  //      l'index unique sur `stripePaymentIntentId` pour résoudre les races
+  //      entre webhook et /confirm s'ils arrivent à la même milliseconde.
+  //
+  // Le retour 200 est CRUCIAL — sans 2xx, Stripe retentera l'envoi avec
+  // backoff jusqu'à 3 jours.
   async handleStripeWebhookEvent(event: StripeWebhookEvent): Promise<void> {
+    // Couche 1 — idempotence au niveau event Stripe (event.id PK unique).
+    const { wasAlreadyProcessed } =
+      await this.stripeEventsRepository.markEventAsProcessedIfNew({
+        eventId:   event.id,
+        eventType: event.type,
+      });
+
+    if (wasAlreadyProcessed) {
+      this.logger.debug(`Stripe webhook ${event.type} (${event.id}) déjà traité — skip.`);
+      return;
+    }
+
     this.logger.log(`Stripe webhook reçu : ${event.type} (${event.id})`);
 
     switch (event.type) {
@@ -329,35 +389,47 @@ export class PaymentsService {
   // document Payment en DB. Appelée à la fois par /payments/confirm (chemin
   // synchrone côté client) et par le webhook (filet de sécurité asynchrone).
   //
-  // L'idempotence repose sur l'index unique-sparse `stripePaymentIntentId` :
-  // si le paiement est déjà en DB, on retourne silencieusement.
+  // L'upsert atomique élimine la race condition find→check→create qui
+  // existait avant : deux callers concurrents qui arrivent simultanément
+  // produisent une seule insertion (le second voit `wasInserted=false`).
+  //
+  // Retourne :
+  //   • `paymentId` — l'ObjectId du document Payment si on l'a inséré dans
+  //     cet appel (null si déjà existant — caller doit lookup pour le récupérer)
+  //   • `wasNewlyRecorded` — true si cet appel a effectivement inséré
   private async persistSucceededPaymentIfNew(paymentIntent: {
     id:        string;
     amount:    number;
     metadata?: { athleteId?: string; coachId?: string; description?: string };
-  }): Promise<void> {
+  }): Promise<{ paymentId: string | null; wasNewlyRecorded: boolean }> {
     // Garde-fou : metadata.athleteId/coachId sont écrits par
     // createPaymentIntentForCoach — toujours présents en théorie.
     if (!paymentIntent.metadata?.athleteId || !paymentIntent.metadata?.coachId) {
       this.logger.warn(
         `PaymentIntent ${paymentIntent.id} sans metadata athleteId/coachId — skip.`,
       );
-      return;
+      return { paymentId: null, wasNewlyRecorded: false };
     }
 
-    // Idempotence — skip silencieux si déjà enregistré.
-    const existing = await this.paymentsRepository.findByStripePaymentIntentId(
-      paymentIntent.id,
-    );
-    if (existing) return;
+    const { wasInserted, insertedId } =
+      await this.paymentsRepository.upsertPaymentByStripePaymentIntentId({
+        senderId:              new Types.ObjectId(paymentIntent.metadata.athleteId),
+        receiverId:            new Types.ObjectId(paymentIntent.metadata.coachId),
+        amountInCents:         paymentIntent.amount,
+        status:                'completed',
+        description:           paymentIntent.metadata.description || undefined,
+        stripePaymentIntentId: paymentIntent.id,
+      });
 
-    await this.paymentsRepository.createPaymentRecord({
-      senderId:              new Types.ObjectId(paymentIntent.metadata.athleteId),
-      receiverId:            new Types.ObjectId(paymentIntent.metadata.coachId),
-      amountInCents:         paymentIntent.amount,
-      status:                'completed',
-      description:           paymentIntent.metadata.description || undefined,
-      stripePaymentIntentId: paymentIntent.id,
-    });
+    if (wasInserted) {
+      this.logger.log(
+        `Payment ${paymentIntent.id} persisted (amount: ${paymentIntent.amount}c)`,
+      );
+    }
+
+    return {
+      paymentId:        insertedId ?? null,
+      wasNewlyRecorded: wasInserted,
+    };
   }
 }

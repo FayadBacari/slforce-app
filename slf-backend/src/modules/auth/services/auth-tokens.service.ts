@@ -98,9 +98,33 @@ export class AuthTokensService {
   }
 
   // Révoque un seul refresh token (logout).
+  //
+  // L'idempotence est préservée : si le token n'est pas en DB (déjà révoqué
+  // ou inconnu), on ne throw pas — l'utilisateur veut juste "être déconnecté",
+  // peu importe que la session existe encore côté serveur.
   async revokeRefreshToken(refreshTokenFromClient: string): Promise<void> {
     const tokenHash = this.computeSha256Hash(refreshTokenFromClient);
     await this.refreshTokensRepository.deleteOneByHash(tokenHash);
+  }
+
+  // ─── Vérification signature seule (sans check DB) ─────────────────────────
+  //
+  // Utilisé par le flow de LOGOUT : on veut s'assurer que le token présenté
+  // a bien été signé par notre backend (donc pas un token random forgé pour
+  // tenter de révoquer des sessions au hasard), MAIS sans exiger qu'il soit
+  // encore en DB (un user peut vouloir logout après expiration naturelle).
+  //
+  // `ignoreExpiration: true` permet de logout aussi avec un refresh expiré —
+  // c'est l'usage attendu (l'utilisateur ferme l'app pendant 31 jours et veut
+  // se déconnecter au retour). La signature reste vérifiée, ce qui suffit à
+  // bloquer un attaquant qui essaierait des tokens forgés.
+  async verifyRefreshTokenSignatureWithoutDbCheck(
+    refreshTokenFromClient: string,
+  ): Promise<void> {
+    await this.jwtService.verifyAsync(refreshTokenFromClient, {
+      secret:           this.refreshSecret,
+      ignoreExpiration: true,
+    });
   }
 
   // Révoque TOUS les refresh tokens d'un user (changement de mot de passe,
@@ -133,19 +157,29 @@ export class AuthTokensService {
 
   // Extrait la date d'expiration EXACTE du JWT signé.
   // jsonwebtoken stocke `exp` en SECONDES Unix → on multiplie par 1000.
-  // Si la lecture échoue (cas pathologique), on retombe sur une fenêtre prudente
-  // de 30 jours pour ne pas bloquer le flow d'auth.
+  //
+  // On THROW plutôt que de fallback silencieusement : si on ne peut pas lire
+  // `exp` après signature, c'est un bug critique (token corrompu, lib défaillante,
+  // payload non standard). Stocker une fausse expiration en DB serait pire —
+  // un token réellement expiré pourrait passer pour valide, ou inversement.
+  // Préférable de faire échouer le login/refresh proprement.
   private extractExpirationDateFromSignedToken(signedToken: string): Date {
+    let decoded: JwtPayloadWithExpiration | null;
     try {
-      const decoded = this.jwtService.decode<JwtPayloadWithExpiration>(signedToken);
-      if (decoded && typeof decoded.exp === 'number') {
-        return new Date(decoded.exp * 1_000);
-      }
+      decoded = this.jwtService.decode<JwtPayloadWithExpiration>(signedToken);
     } catch (decodeError) {
-      this.logger.warn('Impossible de décoder l\'expiration du refresh token', decodeError);
+      this.logger.error('JWT decode threw — token signing infrastructure broken', decodeError);
+      throw new Error('Failed to decode just-signed JWT — check signing infrastructure');
     }
-    // Fallback prudent — 30 jours par défaut
-    return new Date(Date.now() + 30 * 24 * 60 * 60 * 1_000);
+
+    if (!decoded || typeof decoded.exp !== 'number') {
+      this.logger.error(
+        `JWT decoded but missing numeric "exp" claim. Decoded payload: ${JSON.stringify(decoded)}`,
+      );
+      throw new Error('Just-signed JWT has no "exp" claim — refusing to persist with fake expiry');
+    }
+
+    return new Date(decoded.exp * 1_000);
   }
 
   // sha256 du JWT — on ne stocke jamais le token en clair.

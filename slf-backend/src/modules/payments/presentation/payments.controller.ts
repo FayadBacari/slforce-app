@@ -16,7 +16,7 @@ import type {
   DashboardUrlResponseDto,
 } from './dto/bank-account-response.dto';
 import { InitiatePaymentBodyDto, ConfirmPaymentBodyDto } from './dto/payment-intent.dto';
-import type { PaymentIntentResponseDto } from './dto/payment-intent.dto';
+import type { PaymentIntentResponseDto, ConfirmPaymentResponseDto } from './dto/payment-intent.dto';
 
 @ApiTags('Payments')
 @ApiBearerAuth('access-token')
@@ -52,7 +52,7 @@ export class PaymentsController {
   confirmPayment(
     @CurrentUser() currentUser: AuthenticatedUserPayload,
     @Body() body:               ConfirmPaymentBodyDto,
-  ): Promise<void> {
+  ): Promise<ConfirmPaymentResponseDto> {
     return this.paymentsService.confirmPayment({
       athleteId:       currentUser.userId,
       paymentIntentId: body.paymentIntentId,

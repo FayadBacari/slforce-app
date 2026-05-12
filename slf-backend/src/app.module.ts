@@ -3,6 +3,35 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
+import { randomUUID } from 'crypto';
+import type { IncomingMessage, ServerResponse } from 'http';
+
+// ─── Correlation ID propagation ──────────────────────────────────────────────
+//
+// Chaque requête HTTP entrante reçoit un identifiant unique stocké dans
+// `req.id` et propagé :
+//   • dans tous les logs Pino du cycle de la requête (auto-injection par
+//     pino-http dès qu'on définit `genReqId`)
+//   • dans le header de réponse `X-Request-Id`, pour que le mobile/web puisse
+//     le mettre dans ses crash reports → trace bout-en-bout user ↔ serveur
+//
+// On honore aussi `X-Request-Id` envoyé par le client (utile pour les retries :
+// le mobile peut rejouer le même ID, ce qui simplifie le debug).
+//
+// Nom du header standardisé en lowercase (Node normalise les headers entrants).
+const REQUEST_ID_HEADER = 'x-request-id';
+
+function generateOrPropagateRequestId(
+  request:  IncomingMessage,
+  response: ServerResponse,
+): string {
+  const incomingId = request.headers[REQUEST_ID_HEADER];
+  const requestId  = typeof incomingId === 'string' && incomingId.length > 0
+    ? incomingId
+    : randomUUID();
+  response.setHeader('X-Request-Id', requestId);
+  return requestId;
+}
 
 // Config
 import { appConfig } from './core/config/app.config';
@@ -48,9 +77,17 @@ import { PaymentsModule } from './modules/payments/payments.module';
           ? undefined
           : { target: 'pino-pretty', options: { colorize: true, singleLine: true } },
         level:  process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+        // Génère/propage un correlation ID par requête. Tous les logs émis
+        // pendant la requête seront automatiquement enrichis avec `req.id`,
+        // ce qui permet de tracer une requête bout-en-bout dans Datadog / Loki.
+        genReqId: generateOrPropagateRequestId,
+        customProps: () => ({ service: 'slf-backend' }),
         // Don't log health-check requests — too noisy
         autoLogging: {
-          ignore: (request) => request.url === '/api/v1/health',
+          ignore: (request) =>
+            request.url === '/api/v1/health' ||
+            request.url === '/api/v1/health/ready' ||
+            request.url === '/api/v1/health/live',
         },
       },
     }),

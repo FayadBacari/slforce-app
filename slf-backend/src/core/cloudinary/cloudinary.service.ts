@@ -53,10 +53,18 @@ export class CloudinaryService implements OnModuleInit {
   //   • format auto — Cloudinary délivre webp/avif si supporté par le client
   //   • qualité auto — compression intelligente, pas de réglage manuel à maintenir
   async uploadProfilePhoto(
-    fileBuffer: Buffer,
-    mimeType:   string,
+    fileBuffer:  Buffer,
+    mimeType:    string,
     ownerUserId: string,
   ): Promise<CloudinaryUploadResult> {
+    // Le mimetype a déjà été validé en amont par le fileFilter de multer
+    // (cf. UsersController). On le log uniquement pour aider au debug en cas
+    // d'upload corrompu — Cloudinary détecte le format réel depuis les magic
+    // bytes du buffer, indépendamment de cet en-tête.
+    this.logger.debug(
+      `Cloudinary upload start — user=${ownerUserId} mime=${mimeType} size=${fileBuffer.length}B`,
+    );
+
     return new Promise<CloudinaryUploadResult>((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
@@ -83,13 +91,24 @@ export class CloudinaryService implements OnModuleInit {
         },
       );
 
-      // Stream le buffer en une seule fois — le mimetype est déjà validé en amont
-      // par fileFilter (dans users.controller).
+      // Stream le buffer en une seule fois.
       uploadStream.end(fileBuffer);
-      // mimeType est utilisé seulement pour l'éventuel debug logging — Cloudinary
-      // détecte le format depuis les magic bytes du buffer.
-      void mimeType;
     });
+  }
+
+  // ─── healthCheck ─────────────────────────────────────────────────────────
+  //
+  // Ping minimal de l'API Cloudinary pour le /health/ready endpoint. Renvoie
+  // true si l'API répond (auth + DNS + network OK), false sinon. Best-effort :
+  // jamais throw, c'est un check de readiness pas une opération critique.
+  async healthCheck(): Promise<boolean> {
+    try {
+      const result = await cloudinary.api.ping();
+      return result?.status === 'ok';
+    } catch (pingError) {
+      this.logger.warn('Cloudinary ping failed', pingError);
+      return false;
+    }
   }
 
   // ─── Suppression d'une photo ───────────────────────────────────────────────

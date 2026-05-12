@@ -5,88 +5,145 @@ import axios, {
 } from 'axios';
 import { router } from 'expo-router';
 import { API_BASE_URL, API_ENDPOINTS } from './api-endpoints';
+import { APP_VERSION, APP_PLATFORM } from './api-app-metadata';
+import {
+  type RetryableRequestConfig,
+  retryAxiosRequest,
+  shouldRetryAxiosError,
+} from './api-retry';
+import {
+  type BackendSuccessEnvelope,
+  unwrapBackendEnvelope,
+} from './api-response-envelope';
 import {
   readValueFromSecureStorage,
   saveValueToSecureStorage,
 } from '@core/storage/secure-storage';
 import { SECURE_STORAGE_KEYS } from '@core/storage/secure-storage-keys';
-// Imported lazily (via getState) to avoid circular dependencies at module init time.
-// These are plain Zustand stores — calling .getState() outside a React component is safe.
+import {
+  API_DEFAULT_TIMEOUT_MS,
+  HTTP_HEADER_APP_PLATFORM,
+  HTTP_HEADER_APP_VERSION,
+  HTTP_HEADER_IDEMPOTENCY_KEY,
+  HTTP_HEADER_REQUEST_ID,
+} from '@shared/constants/app-constants';
+import { createLogger } from '@shared/logger/logger';
+import { generateUuidV4 } from '@shared/utils/generate-uuid.util';
+// Stores importés lazy (via getState) pour casser les cycles au module-init.
 import { useAuthenticationStore } from '@stores/authentication-store';
 import { useCoachProfileStore } from '@stores/coach-profile-store';
 import { useAthleteProfileStore } from '@stores/athlete-profile-store';
 
-// One shared Axios instance for the entire app.
-// Every API call goes through here and automatically gets the right headers.
+const logger = createLogger('ApiClient');
+
+// ─── Instance Axios partagée ─────────────────────────────────────────────────
+//
+// Une seule instance pour TOUTE l'app. Tous les data-sources passent par elle.
+// Aucun screen ni hook ne doit appeler `axios.<method>` directement.
 const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 15000,
+  timeout: API_DEFAULT_TIMEOUT_MS,
   headers: {
-    'Content-Type': 'application/json',
-    Accept: 'application/json',
+    'Content-Type':                'application/json',
+    'Accept':                      'application/json',
+    [HTTP_HEADER_APP_VERSION]:     APP_VERSION,
+    [HTTP_HEADER_APP_PLATFORM]:    APP_PLATFORM,
   },
 });
 
-// Stores the in-flight token refresh promise.
-// If two requests fail at the same time, they both wait for ONE refresh
-// instead of each making their own refresh request (single-flight pattern).
+// Single-flight refresh token — toutes les requêtes 401 concurrentes attendent
+// le MÊME appel /auth/refresh, évite N appels parallèles inutiles.
 let tokenRefreshInProgress: Promise<string | null> | null = null;
 
 // ─── REQUEST INTERCEPTOR ──────────────────────────────────────────────────────
-// Runs before every request. Attaches the access token to the Authorization header.
-// Q-03: Prefers the in-memory Zustand token (zero-cost synchronous read) and only
-// falls back to SecureStorage when the store is still empty (first request on cold start).
+//
+// Trois responsabilités :
+//   1. Injecter le Bearer access token
+//   2. Générer (ou propager) un X-Request-Id par requête
+//   3. Conserver le compteur `_retryAttemptCount` à travers les retries
 apiClient.interceptors.request.use(
   async (config: InternalAxiosRequestConfig) => {
-    // Fast path: read from in-memory store (no async keychain call)
+    // ── 1. Auth token ──────────────────────────────────────────────────────
+    // Path rapide : token in-memory (Zustand) — sync, zero IO.
     const inMemoryToken = useAuthenticationStore.getState().accessToken;
     if (inMemoryToken) {
       config.headers.Authorization = `Bearer ${inMemoryToken}`;
-      return config;
+    } else {
+      // Path lent : storage chiffré (cold start, store pas hydraté).
+      const savedAccessToken = await readValueFromSecureStorage(
+        SECURE_STORAGE_KEYS.accessToken,
+      );
+      if (savedAccessToken) {
+        config.headers.Authorization = `Bearer ${savedAccessToken}`;
+      }
     }
 
-    // Slow path: store not hydrated yet — fall back to SecureStorage
-    const savedAccessToken = await readValueFromSecureStorage(
-      SECURE_STORAGE_KEYS.accessToken,
-    );
-    if (savedAccessToken) {
-      config.headers.Authorization = `Bearer ${savedAccessToken}`;
+    // ── 2. X-Request-Id — généré côté client, propagé jusqu'au backend ───
+    //
+    // Si le caller a déjà mis un X-Request-Id (cas du retry ou d'un caller
+    // qui veut tracer une opération composite), on le respecte. Sinon on
+    // génère un UUID v4. Backend renvoie le même ID en réponse (cf. filter).
+    if (!config.headers[HTTP_HEADER_REQUEST_ID]) {
+      config.headers[HTTP_HEADER_REQUEST_ID] = generateUuidV4();
     }
+
     return config;
   },
   (error) => Promise.reject(error),
 );
 
 // ─── RESPONSE INTERCEPTOR ─────────────────────────────────────────────────────
-// Runs after every response.
-// If the server returns a 401 (token expired), it automatically fetches a new
-// token and retries the original request — transparently to the caller.
+//
+// Trois responsabilités, dans cet ordre :
+//   1. Si 401 et non-déjà-tenté → rafraîchir le token et retry
+//   2. Si erreur transitoire (network, 502/503/504) → retry exponentiel
+//   3. Sinon → propager l'erreur au caller
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const originalRequest = error.config as AxiosRequestConfig & {
-      _retryAttempted?: boolean;
-    };
+    const originalConfig = error.config as RetryableRequestConfig & {
+      _refreshAttempted?: boolean;
+    } | undefined;
 
-    const isTokenExpiredError = error.response?.status === 401;
-    const hasNotAlreadyRetried = !originalRequest._retryAttempted;
-    const isNotTheRefreshEndpointItself = !originalRequest.url?.includes(
+    if (!originalConfig) {
+      return Promise.reject(error);
+    }
+
+    // ── Couche 1 : refresh token (401) ────────────────────────────────────
+    const isTokenExpiredError       = error.response?.status === 401;
+    const hasNotAlreadyRefreshed    = !originalConfig._refreshAttempted;
+    const isNotTheRefreshEndpoint   = !originalConfig.url?.includes(
       API_ENDPOINTS.authentication.refreshToken,
     );
 
-    if (isTokenExpiredError && hasNotAlreadyRetried && isNotTheRefreshEndpointItself) {
-      originalRequest._retryAttempted = true;
-
+    if (isTokenExpiredError && hasNotAlreadyRefreshed && isNotTheRefreshEndpoint) {
+      originalConfig._refreshAttempted = true;
       try {
         const newAccessToken = await refreshAccessTokenSafely();
         if (newAccessToken) {
-          if (originalRequest.headers) {
-            originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
-          }
-          return apiClient(originalRequest);
+          originalConfig.headers = originalConfig.headers ?? {};
+          (originalConfig.headers as Record<string, string>)['Authorization'] =
+            `Bearer ${newAccessToken}`;
+          return apiClient(originalConfig);
         }
-      } catch {
+      } catch (refreshError) {
+        logger.warn('Refresh token flow failed, clearing session', refreshError);
         await deleteAllSavedUserCredentials();
+      }
+    }
+
+    // ── Couche 2 : retry exponentiel pour erreurs transitoires ─────────────
+    if (shouldRetryAxiosError(error)) {
+      try {
+        return await retryAxiosRequest(
+          (configWithUpdatedCounter) => apiClient(configWithUpdatedCounter),
+          originalConfig,
+        );
+      } catch (retryError) {
+        // L'erreur du dernier retry est renvoyée au caller. Pas de log
+        // bruyant ici : le logger des data-sources / convertAnyErrorToAppError
+        // s'en charge contextuellement.
+        return Promise.reject(retryError);
       }
     }
 
@@ -94,9 +151,9 @@ apiClient.interceptors.response.use(
   },
 );
 
-// ─── Shape of the token-refresh backend response ──────────────────────────────
-// A-04: includes the optional `user` identity snapshot so we can keep
-// email/firstName/lastName fresh without a separate /users/profile call.
+// ─── Shape de la réponse /auth/refresh ───────────────────────────────────────
+// Inclut le `user` optionnel pour pouvoir rafraîchir l'identité locale sans
+// un appel /users/profile supplémentaire.
 interface RefreshResponseData {
   accessToken:  string;
   refreshToken: string;
@@ -108,10 +165,13 @@ interface RefreshResponseData {
   };
 }
 
-// Refreshes the access token using the refresh token.
-// Uses the single-flight pattern: multiple callers share one refresh call.
-// Q-01: throws instead of returning null when there is no refresh token so the
-// caller (response interceptor) can catch and trigger a full sign-out.
+// ─── refreshAccessTokenSafely ────────────────────────────────────────────────
+//
+// Single-flight : si plusieurs requêtes échouent à 401 simultanément, elles
+// partagent la même promesse de refresh.
+//
+// Throws (pas return null) si pas de refresh en storage — la session est
+// définitivement perdue, le caller doit forcer le logout.
 async function refreshAccessTokenSafely(): Promise<string | null> {
   if (tokenRefreshInProgress) {
     return tokenRefreshInProgress;
@@ -122,35 +182,36 @@ async function refreshAccessTokenSafely(): Promise<string | null> {
       SECURE_STORAGE_KEYS.refreshToken,
     );
 
-    // Q-01: no refresh token means the session is definitively expired — throw so
-    // the catch block in the response interceptor can call deleteAllSavedUserCredentials.
     if (!savedRefreshToken) {
       throw new Error('No refresh token in storage — session expired');
     }
 
-    // The backend rotates refresh tokens on every refresh, AND wraps responses
-    // in the standard envelope { success: true, data: { ... } }.
-    const response = await axios.post<{
-      success: true;
-      data: RefreshResponseData;
-    }>(
+    // Bypass volontaire de l'instance apiClient pour éviter une boucle infinie
+    // si l'endpoint /refresh retournait 401 (case dégénéré).
+    // On réutilise le SHAPE typé `BackendSuccessEnvelope` au lieu de redéfinir
+    // l'enveloppe inline (DRY + alignement contractuel garanti).
+    const httpResponse = await axios.post<BackendSuccessEnvelope<RefreshResponseData>>(
       `${API_BASE_URL}${API_ENDPOINTS.authentication.refreshToken}`,
       { refreshToken: savedRefreshToken },
+      {
+        headers: {
+          'Content-Type':            'application/json',
+          [HTTP_HEADER_APP_VERSION]: APP_VERSION,
+          [HTTP_HEADER_REQUEST_ID]:  generateUuidV4(),
+        },
+      },
     );
 
-    const { accessToken: newAccessToken, refreshToken: newRefreshToken, user } =
-      response.data.data;
+    const refreshPayload = unwrapBackendEnvelope(httpResponse);
 
-    await saveValueToSecureStorage(SECURE_STORAGE_KEYS.accessToken,  newAccessToken);
-    await saveValueToSecureStorage(SECURE_STORAGE_KEYS.refreshToken, newRefreshToken);
+    await saveValueToSecureStorage(SECURE_STORAGE_KEYS.accessToken,  refreshPayload.accessToken);
+    await saveValueToSecureStorage(SECURE_STORAGE_KEYS.refreshToken, refreshPayload.refreshToken);
 
-    // A-04: sync fresh identity fields into the auth store so email/firstName/lastName
-    // are never stale after a long-lived session refresh.
-    if (user) {
-      await useAuthenticationStore.getState().refreshUserIdentity(user);
+    if (refreshPayload.user) {
+      await useAuthenticationStore.getState().refreshUserIdentity(refreshPayload.user);
     }
 
-    return newAccessToken;
+    return refreshPayload.accessToken;
   })();
 
   try {
@@ -160,20 +221,37 @@ async function refreshAccessTokenSafely(): Promise<string | null> {
   }
 }
 
-// Wipes all session data when the refresh token is expired or invalid.
-// Clears SecureStorage, the auth Zustand store, and both profile stores so the
-// router's auth guard sees loggedInUser === null and redirects to the login screen.
-// Q-02: explicitly navigates to the login screen after clearing credentials so the
-// user is never left on a protected screen with a null loggedInUser.
+// ─── deleteAllSavedUserCredentials ───────────────────────────────────────────
+//
+// Wipe COMPLET de la session locale + redirection vers l'écran de login.
+// Appelé quand le refresh échoue (token révoqué, expiré, secret tourné backend).
 async function deleteAllSavedUserCredentials(): Promise<void> {
-  // clearAllDataOnLogout handles SecureStorage + in-memory auth state in one call.
   await useAuthenticationStore.getState().clearAllDataOnLogout();
-  // Clear whichever profile store is populated (safe to clear both).
   useCoachProfileStore.getState().clearCoachProfile();
   useAthleteProfileStore.getState().clearAthleteProfile();
-  // Q-02: drive navigation imperatively so the user lands on the login screen
-  // even when the auth guard hasn't re-evaluated yet.
   router.replace('/(public)/login');
+}
+
+// ─── withIdempotencyKey ──────────────────────────────────────────────────────
+//
+// Helper à utiliser dans les data-sources pour les POST critiques (paiement,
+// register, etc.). Génère un UUID unique côté client et l'envoie en
+// `X-Idempotency-Key`. Le backend pourra l'utiliser pour dédupliquer si on
+// implémente le middleware d'idempotence (cf. roadmap audit).
+//
+// Pour l'instant le backend dédoublonne déjà via les contraintes uniques
+// (stripePaymentIntentId, email) ; ce helper PRÉPARE le terrain pour un
+// middleware d'idempotence générique sans casser l'API.
+export function withIdempotencyKey(
+  config: AxiosRequestConfig = {},
+): AxiosRequestConfig {
+  return {
+    ...config,
+    headers: {
+      ...config.headers,
+      [HTTP_HEADER_IDEMPOTENCY_KEY]: generateUuidV4(),
+    },
+  };
 }
 
 export { apiClient };

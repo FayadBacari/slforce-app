@@ -31,20 +31,25 @@ import { UserRole } from '@shared/types/user-role.enum';
 // Champs strictement liés à l'authentification et l'identité de base.
 // Resteront dans la collection `users` après le split.
 export interface UserAuthFields {
-  email:            string;
-  password:         string;
-  firstName:        string;
-  lastName:         string;
-  displayName?:     string;
-  phoneNumber?:     string;
-  profilePhotoUrl?: string;
-  role:             UserRole;
-  isActive:         boolean;
-  isProfilePublic:  boolean;
-  showOnlineStatus: boolean;
-  stripeAccountId?: string;
-  lastLoginAt?:     Date;
-  deletedAt?:       Date;
+  email:                 string;
+  password:              string;
+  firstName:             string;
+  lastName:              string;
+  displayName?:          string;
+  phoneNumber?:          string;
+  profilePhotoUrl?:      string;
+  // Cloudinary publicId de la photo de profil active — persisté pour pouvoir
+  // supprimer l'ancienne version quand l'utilisateur upload une nouvelle photo
+  // (cf. UsersController.uploadProfilePhoto). Indispensable pour ne pas
+  // accumuler des photos orphelines dans Cloudinary à chaque changement.
+  profilePhotoPublicId?: string;
+  role:                  UserRole;
+  isActive:              boolean;
+  isProfilePublic:       boolean;
+  showOnlineStatus:      boolean;
+  stripeAccountId?:      string;
+  lastLoginAt?:          Date;
+  deletedAt?:            Date;
 }
 
 // Champs spécifiques au profil coach. Migreront vers `coach_profiles`.
@@ -105,6 +110,10 @@ export class User
 
   @Prop()
   profilePhotoUrl?: string;
+
+  // Cloudinary publicId — voir UserAuthFields pour le rationale.
+  @Prop()
+  profilePhotoPublicId?: string;
 
   @Prop({ required: true, enum: Object.values(UserRole) })
   role!: UserRole;

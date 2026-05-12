@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { randomUUID } from 'crypto';
 import { User, UserDocument } from '../schemas/user.schema';
 import { UserRole } from '@shared/types/user-role.enum';
 
@@ -15,7 +16,8 @@ import { UserRole } from '@shared/types/user-role.enum';
 // whitelist agit comme deuxième barrière au niveau du repository — défense en profondeur.
 export type UpdatableUserFields = Partial<Pick<User,
   // ── Identité ─────────────────────────────────────────────────────────────────
-  | 'displayName' | 'firstName' | 'lastName' | 'phoneNumber' | 'profilePhotoUrl'
+  | 'displayName' | 'firstName' | 'lastName' | 'phoneNumber'
+  | 'profilePhotoUrl' | 'profilePhotoPublicId'
   // ── Profil coach ────────────────────────────────────────────────────────────
   | 'speciality' | 'bio' | 'location' | 'monthlyRate' | 'experienceYears' | 'disciplines'
   // ── Profil athlète ──────────────────────────────────────────────────────────
@@ -173,17 +175,21 @@ export class UsersRepository {
   // so the original email / name / photo are freed immediately, and clears every
   // profile field. The document stays in MongoDB so Stripe payment history and
   // audit trails remain intact.
+  //
+  // Le placeholder email utilise un UUID v4 (et NON `Date.now()`) — deux
+  // suppressions concurrentes dans la même milliseconde produiraient un
+  // E11000 sur l'index unique `email`. UUID élimine ce risque même en
+  // multi-instances.
   async softDeleteAccount(userId: string): Promise<void> {
     if (!Types.ObjectId.isValid(userId)) return;
-    const timestamp = Date.now();
+    const anonymizedEmail = `deleted_${randomUUID()}@deleted.invalid`;
     await this.userModel.updateOne(
       { _id: userId },
       {
         $set: {
           isActive:    false,
           deletedAt:   new Date(),
-          // Replace PII with neutral placeholders — original email freed for re-use
-          email:       `deleted_${timestamp}@deleted.invalid`,
+          email:       anonymizedEmail,
           firstName:   'Compte',
           lastName:    'Supprimé',
           // Unusable password hash — account can never be logged into again
@@ -191,24 +197,25 @@ export class UsersRepository {
           disciplines: [],
         },
         $unset: {
-          profilePhotoUrl:  '',
-          displayName:      '',
-          phoneNumber:      '',
-          speciality:       '',
-          bio:              '',
-          location:         '',
-          monthlyRate:      '',
-          experienceYears:  '',
-          gender:           '',
-          weightCategory:   '',
-          weightKg:         '',
-          heightCm:         '',
-          recordMuscleUp:   '',
-          recordTraction:   '',
-          recordDips:       '',
-          recordSquat:      '',
-          stripeAccountId:  '',
-          lastLoginAt:      '',
+          profilePhotoUrl:        '',
+          profilePhotoPublicId:   '',   // Cloudinary cleanup réalisé avant côté service
+          displayName:            '',
+          phoneNumber:            '',
+          speciality:             '',
+          bio:                    '',
+          location:               '',
+          monthlyRate:            '',
+          experienceYears:        '',
+          gender:                 '',
+          weightCategory:         '',
+          weightKg:               '',
+          heightCm:               '',
+          recordMuscleUp:         '',
+          recordTraction:         '',
+          recordDips:             '',
+          recordSquat:            '',
+          stripeAccountId:        '',
+          lastLoginAt:            '',
         },
       },
     ).exec();

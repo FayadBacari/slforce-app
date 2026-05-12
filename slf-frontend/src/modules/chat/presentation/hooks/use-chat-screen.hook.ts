@@ -2,9 +2,13 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Channel, Event } from 'stream-chat';
 import { prewarmConversationChannel, streamChatClient } from '@core/stream-chat/stream-chat-client';
 import { useAuthenticationStore } from '@stores/authentication-store';
+import { INITIAL_CHAT_MESSAGE_PAGE_SIZE } from '@shared/constants/app-constants';
+import { createLogger } from '@shared/logger/logger';
 import type { MessageEntity } from '../../domain/entities/message.entity';
 import { uploadFileToStream } from '../../data/utils/stream-file-uploader';
 import { convertStreamMessageToMessageEntity } from '../../domain/mappers/stream-message.mapper';
+
+const logger = createLogger('ChatScreen');
 
 // File upload and message conversion helpers are in dedicated modules:
 //   data/utils/stream-file-uploader.ts
@@ -224,7 +228,7 @@ export function useChatScreen(conversationChannelId: string) {
         ),
       );
     } catch (err) {
-      console.error('[sendAttachment] upload failed:', err);
+      logger.error('sendAttachment upload failed', err);
       // Mark as failed so the user can see something went wrong
       setListOfMessages((prev) =>
         prev.map((msg) =>
@@ -245,7 +249,7 @@ export function useChatScreen(conversationChannelId: string) {
     try {
       await channelRef.current.hide();
     } catch (err) {
-      console.error('[deleteConversation] hide failed:', err);
+      logger.error('deleteConversation hide failed', err);
     }
   }, []);
 
@@ -258,7 +262,7 @@ export function useChatScreen(conversationChannelId: string) {
     try {
       await channelRef.current.hide();
     } catch (err) {
-      console.error('[blockUser] hide failed:', err);
+      logger.error('blockUser hide failed', err);
     }
   }, []);
 

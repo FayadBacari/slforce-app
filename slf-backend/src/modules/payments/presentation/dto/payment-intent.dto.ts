@@ -35,3 +35,16 @@ export class ConfirmPaymentBodyDto {
   @IsString()
   paymentIntentId!: string;
 }
+
+// ─── POST /payments/confirm — response ───────────────────────────────────────
+// Renvoyé au mobile pour qu'il puisse afficher un état "paiement enregistré"
+// sans avoir à recharger la liste. `wasNewlyRecorded` distingue le cas où
+// le webhook avait déjà persisté avant que le mobile n'appelle /confirm.
+export interface ConfirmPaymentResponseDto {
+  // ID MongoDB du document Payment créé ou existant. Le mobile peut l'utiliser
+  // pour naviguer vers un écran de détail.
+  paymentId:        string;
+  // false si /confirm est arrivé après le webhook (paiement déjà en DB).
+  // true si /confirm est le chemin qui a enregistré le paiement.
+  wasNewlyRecorded: boolean;
+}

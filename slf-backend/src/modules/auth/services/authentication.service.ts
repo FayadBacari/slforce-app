@@ -173,8 +173,26 @@ export class AuthenticationService {
   }
 
   // ─── LOGOUT ──────────────────────────────────────────────────────────────
+  //
+  // Vérifie la signature du refresh token AVANT de tenter la révocation —
+  // empêche un attaquant qui aurait deviné un hash random de spammer
+  // le delete pour DoS des sessions actives (cf. audit "spam /logout").
+  //
+  // Si la signature est invalide → 401. La révocation elle-même reste
+  // idempotente : un token signé mais déjà absent de la DB n'est pas une erreur.
   async logoutByRevokingRefreshToken(refreshTokenFromClient: string): Promise<void> {
-    // We don't throw if the token isn't found — logout is idempotent
+    try {
+      await this.authTokensService.verifyRefreshTokenSignatureWithoutDbCheck(
+        refreshTokenFromClient,
+      );
+    } catch (signatureError) {
+      this.logger.warn(
+        'Logout attempt with invalid refresh token signature',
+        signatureError,
+      );
+      throw new UnauthorizedException('Refresh token invalide.');
+    }
+
     await this.authTokensService.revokeRefreshToken(refreshTokenFromClient);
   }
 

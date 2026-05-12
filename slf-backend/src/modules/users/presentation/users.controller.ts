@@ -6,6 +6,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
   Patch,
   Post,
   Put,
@@ -36,6 +37,8 @@ import {
 export class UsersController {
   // 5 MB max — assez pour une photo HD, refuse les uploads abusifs.
   private static readonly MAX_PROFILE_PHOTO_SIZE_BYTES = 5 * 1024 * 1024;
+
+  private readonly logger = new Logger(UsersController.name);
 
   constructor(
     private readonly usersService:       UsersService,
@@ -103,22 +106,53 @@ export class UsersController {
       throw new BadRequestException('Le fichier reçu est vide.');
     }
 
+    // 0. Récupère l'ancien publicId pour pouvoir nettoyer après — AVANT
+    //    d'écrire le nouveau dans le profil.
+    const previousProfile = await this.usersService.getCurrentUserProfileSnapshot(
+      currentUser.userId,
+    );
+    const previousPublicId = previousProfile.profilePhotoPublicId;
+
     // 1. Upload vers Cloudinary — renvoie une URL HTTPS stable + un publicId.
-    const { secureUrl } = await this.cloudinaryService.uploadProfilePhoto(
+    const { secureUrl, publicId } = await this.cloudinaryService.uploadProfilePhoto(
       file.buffer,
       file.mimetype,
       currentUser.userId,
     );
 
-    // 2. Persiste l'URL distante en MongoDB — source de vérité.
-    await this.usersService.updateCurrentUserProfile(currentUser.userId, {
-      profilePhotoUrl: secureUrl,
-    });
+    // 2. Persiste l'URL ET le publicId en MongoDB — source de vérité.
+    //    Méthode dédiée car le publicId est un champ INTERNE qui ne doit
+    //    jamais transiter par UpdateProfileRequestDto (contrat HTTP public).
+    await this.usersService.updateCurrentUserPhotoMetadata(
+      currentUser.userId,
+      secureUrl,
+      publicId,
+    );
 
-    // 3. Best-effort : sync l'avatar vers Stream Chat pour que les conversations
-    //    en cours reflètent le changement sans attendre une reconnexion.
-    //    Fire-and-forget — un fail Stream ne doit jamais bloquer la réponse HTTP.
-    void this.chatService.updateUserImageInStream(currentUser.userId, secureUrl);
+    // 3. Best-effort : sync l'avatar vers Stream Chat. Fire-and-forget MAIS
+    //    avec `.catch()` pour ne pas générer un `unhandledRejection` qui peut
+    //    crasher le process selon la config Node.
+    this.chatService.updateUserImageInStream(currentUser.userId, secureUrl)
+      .catch((chatError: unknown) => {
+        this.logger.warn(
+          `Stream avatar sync failed for user ${currentUser.userId} (non-fatal)`,
+          chatError,
+        );
+      });
+
+    // 4. Best-effort : supprime l'ancienne photo Cloudinary pour ne pas
+    //    accumuler des fichiers orphelins (quota Cloudinary épuisé en 6 mois
+    //    sinon). On ne touche pas si la précédente était un avatar généré
+    //    (pas de publicId associé — cas des comptes créés sans upload réel).
+    if (previousPublicId && previousPublicId !== publicId) {
+      this.cloudinaryService.deletePhotoByPublicId(previousPublicId)
+        .catch((deleteError: unknown) => {
+          this.logger.warn(
+            `Cloudinary cleanup failed for old publicId ${previousPublicId} (non-fatal)`,
+            deleteError,
+          );
+        });
+    }
 
     return { photoUrl: secureUrl };
   }

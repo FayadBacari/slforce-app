@@ -3,11 +3,19 @@ import { Types } from 'mongoose';
 import { UsersRepository } from '../data/repositories/users.repository';
 import { AuthTokensService } from '@modules/auth/services/auth-tokens.service';
 import { ChatService } from '@modules/chat/services/chat.service';
+import { CloudinaryService } from '@core/cloudinary/cloudinary.service';
 import { UpdateProfileRequestDto } from '../presentation/dto/update-profile.dto';
 import { UserRole } from '@shared/types/user-role.enum';
 import { formatUserForClient } from '../utils/format-user-for-client.util';
 import type { AuthenticatedUserResponse } from '@modules/auth/presentation/dto/auth-response.dto';
 import type { PrivacySettingsResponseDto } from '../presentation/dto/privacy-settings.dto';
+
+// Projection minimale du document utilisateur — utilisée par UsersController
+// pour les opérations qui ont besoin de champs serveur non exposés au client
+// (ex: profilePhotoPublicId pour le cleanup Cloudinary).
+export interface UserSnapshotForOps {
+  profilePhotoPublicId?: string;
+}
 
 export interface PlatformStatsResponse {
   coachCount:   number;
@@ -19,12 +27,27 @@ export class UsersService {
   private readonly logger = new Logger(UsersService.name);
 
   constructor(
-    private readonly usersRepository:   UsersRepository,
-    private readonly authTokensService: AuthTokensService,
+    private readonly usersRepository:    UsersRepository,
+    private readonly authTokensService:  AuthTokensService,
     // ChatService centralise désormais TOUS les appels au SDK Stream serveur.
     // UsersService ne crée plus son propre client (cf. correction "Stream client mutualisé").
-    private readonly chatService:       ChatService,
+    private readonly chatService:        ChatService,
+    // Pour nettoyer la photo Cloudinary lors de la suppression de compte.
+    private readonly cloudinaryService:  CloudinaryService,
   ) {}
+
+  // GET (interne) — snapshot des champs serveur non exposés via le DTO public.
+  // Utilisé par UsersController pour récupérer le publicId Cloudinary actuel
+  // avant d'overwrite avec une nouvelle photo.
+  async getCurrentUserProfileSnapshot(currentUserId: string): Promise<UserSnapshotForOps> {
+    const user = await this.usersRepository.findOneById(currentUserId);
+    if (!user) {
+      throw new NotFoundException('Utilisateur introuvable.');
+    }
+    return {
+      profilePhotoPublicId: user.profilePhotoPublicId,
+    };
+  }
 
   // GET /users/profile — renvoie le profil de l'utilisateur courant
   async getCurrentUserProfile(currentUserId: string): Promise<AuthenticatedUserResponse> {
@@ -41,6 +64,28 @@ export class UsersService {
     fieldsToUpdate: UpdateProfileRequestDto,
   ): Promise<AuthenticatedUserResponse> {
     const updatedUser = await this.usersRepository.updateProfileFields(currentUserId, fieldsToUpdate);
+    if (!updatedUser) {
+      throw new NotFoundException('Utilisateur introuvable.');
+    }
+    return formatUserForClient(updatedUser);
+  }
+
+  // ─── Mise à jour interne de la photo de profil ────────────────────────────
+  //
+  // Stocke à la fois l'URL CDN (consommée par le front) et le publicId Cloudinary
+  // (consommé en interne pour pouvoir supprimer la photo plus tard).
+  //
+  // N'est PAS exposé via UpdateProfileRequestDto : le publicId est une donnée
+  // serveur, jamais envoyée depuis le client (qui ne devrait pas la connaître).
+  async updateCurrentUserPhotoMetadata(
+    currentUserId: string,
+    photoUrl:      string,
+    photoPublicId: string,
+  ): Promise<AuthenticatedUserResponse> {
+    const updatedUser = await this.usersRepository.updateProfileFields(currentUserId, {
+      profilePhotoUrl:      photoUrl,
+      profilePhotoPublicId: photoPublicId,
+    });
     if (!updatedUser) {
       throw new NotFoundException('Utilisateur introuvable.');
     }
@@ -69,6 +114,8 @@ export class UsersService {
     const user = await this.usersRepository.findOneById(userId);
     if (!user) throw new NotFoundException('Utilisateur introuvable.');
 
+    const previousPhotoPublicId = user.profilePhotoPublicId;
+
     // 1. Révoque toutes les refresh tokens — les access tokens existants
     //    expirent naturellement (15min) mais ne peuvent plus être renouvelés,
     //    donc le compte est verrouillé immédiatement après expiration.
@@ -87,6 +134,20 @@ export class UsersService {
       await this.chatService.markUserAsDeletedInStream(userId);
     } catch (chatError) {
       this.logger.warn('Sync Stream "deleted" non-fatal', chatError);
+    }
+
+    // 4. Best-effort : supprime la photo Cloudinary associée pour respecter
+    //    le RGPD (les PII ne doivent pas survivre à la suppression de compte)
+    //    et libérer du quota CDN. Un échec ici est non-bloquant et loggé.
+    if (previousPhotoPublicId) {
+      try {
+        await this.cloudinaryService.deletePhotoByPublicId(previousPhotoPublicId);
+      } catch (cloudinaryError) {
+        this.logger.warn(
+          `Cloudinary cleanup failed for deleted account ${userId} (non-fatal)`,
+          cloudinaryError,
+        );
+      }
     }
   }
 

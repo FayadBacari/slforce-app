@@ -39,11 +39,17 @@ export class AuthenticationRepository implements IAuthenticationRepository {
   }
 
   async sendPasswordResetEmailToUser(email: string): Promise<void> {
-    return callForgotPasswordApiEndpoint(email);
+    // Le data-source renvoie le message backend (utile en dev pour
+    // logger/afficher le retour). L'interface IAuthenticationRepository
+    // contractualise `Promise<void>` — on ignore donc le message ici pour
+    // ne pas casser le contrat. Si un caller veut afficher le message,
+    // il devra passer par le data-source directement (intentionnel — c'est
+    // un détail HTTP qui ne devrait pas remonter dans le use-case).
+    await callForgotPasswordApiEndpoint(email);
   }
 
   async resetPasswordWithToken(token: string, newPassword: string): Promise<void> {
-    return callResetPasswordApiEndpoint(token, newPassword);
+    await callResetPasswordApiEndpoint(token, newPassword);
   }
 
   async logoutCurrentUser(): Promise<void> {

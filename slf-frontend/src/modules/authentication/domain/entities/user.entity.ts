@@ -9,7 +9,11 @@ export interface UserEntity {
   displayName?:    string;
   role:            UserRole;
   profilePhotoUrl: string | undefined;
-  createdAt:       Date;
+  // Optional — le backend ne renvoie pas createdAt sur les endpoints /auth
+  // (login/register/refresh). À récupérer via GET /users/profile si nécessaire.
+  // Avant cette correction, on stockait `new Date()` côté front, ce qui était
+  // factuellement faux (date du login, pas de la création de compte).
+  createdAt?:      Date;
   disciplines:     string[];
   // Coach-specific profile fields
   speciality?:      string;

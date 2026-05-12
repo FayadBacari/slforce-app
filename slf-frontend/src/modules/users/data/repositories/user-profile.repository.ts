@@ -12,7 +12,9 @@ import {
   callUpdateUserProfileApiEndpoint,
   callGetPrivacySettingsApiEndpoint,
   callUpdatePrivacySettingsApiEndpoint,
+  callUploadProfilePhotoApiEndpoint,
   type UserProfileRaw,
+  type UploadProfilePhotoFile,
 } from '../data-sources/user-profile-api.data-source';
 import type { PrivacySettingsEntity } from '../../domain/entities/privacy-settings.entity';
 
@@ -25,6 +27,11 @@ export const userProfileRepository = {
   // (utile pour récupérer les valeurs coerced ou les champs générés).
   updateProfile: (payload: Partial<UserProfileRaw>): Promise<UserProfileRaw> =>
     callUpdateUserProfileApiEndpoint(payload),
+
+  // Upload une nouvelle photo de profil multipart → Cloudinary via backend.
+  // Renvoie l'URL HTTPS persistée, à stocker dans le store local + Stream.
+  uploadProfilePhoto: (file: UploadProfilePhotoFile): Promise<string> =>
+    callUploadProfilePhotoApiEndpoint(file),
 
   // ── Privacy ──────────────────────────────────────────────────────────────
   getPrivacySettings:    (): Promise<PrivacySettingsEntity> =>
